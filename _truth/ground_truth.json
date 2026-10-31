@@ -1,0 +1,76 @@
+{
+  "seed": 42,
+  "data_start": "2026-01-05",
+  "cohort_days": 30,
+  "liquidity_window_days": 30,
+  "latent": {
+    "sell_through_true_by_category": {
+      "goods": 0.424051,
+      "services": 0.273458,
+      "realty": 0.131034,
+      "auto": 0.309295,
+      "jobs": 0.338462
+    },
+    "sell_through_proxy_by_category": {
+      "goods": 0.421941,
+      "services": 0.160858,
+      "realty": 0.131034,
+      "auto": 0.182692,
+      "jobs": 0.307692
+    },
+    "removal_confusion_by_category": {
+      "goods": {
+        "cohort_size": 474,
+        "sold_share_marked_sold": 0.900498,
+        "unsold_share_marked_sold": 0.159664
+      },
+      "services": {
+        "cohort_size": 373,
+        "sold_share_marked_sold": 0.54902,
+        "unsold_share_marked_sold": 0.032258
+      },
+      "realty": {
+        "cohort_size": 290,
+        "sold_share_marked_sold": 0.736842,
+        "unsold_share_marked_sold": 0.096154
+      },
+      "auto": {
+        "cohort_size": 624,
+        "sold_share_marked_sold": 0.569948,
+        "unsold_share_marked_sold": 0.018519
+      },
+      "jobs": {
+        "cohort_size": 195,
+        "sold_share_marked_sold": 0.757576,
+        "unsold_share_marked_sold": 0.16129
+      }
+    },
+    "platform_true": 0.306994,
+    "platform_proxy": 0.242889
+  },
+  "boost_share_realized": 0.123,
+  "reply_rate_by_sold": {
+    "sold": 1.0,
+    "unsold": 0.536108
+  },
+  "experiment": {
+    "treated_sessions": 34498,
+    "holdout_sessions": 3843,
+    "contacts_per_treated_session": 0.458085,
+    "contacts_per_holdout_session": 0.469685,
+    "incrementality_per_session": -0.011601,
+    "unpaid_contacts_per_treated_session": 0.418401,
+    "unpaid_contacts_per_holdout_session": 0.469685,
+    "paid_contacts": 1369,
+    "unpaid_contacts": 16239,
+    "reply_rate_paid": 0.565376,
+    "reply_rate_unpaid": 0.643574
+  },
+  "expected_signs": {
+    "goods": "negative",
+    "services": "negative",
+    "realty": "negative",
+    "auto": "negative",
+    "jobs": "negative"
+  }
+}

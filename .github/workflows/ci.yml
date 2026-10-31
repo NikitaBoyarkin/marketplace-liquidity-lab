@@ -1,0 +1,33 @@
+# Data strategy: CI regenerates the raw parquet from the seeded generator instead of
+# committing a sample — the log is ~14 MB of gitignored output and SEED=42 already makes
+# it reproducible, so a committed copy would just be a second source of truth that drifts.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Generate raw data (deterministic, SEED=42)
+        run: make data
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .

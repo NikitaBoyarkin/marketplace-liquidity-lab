@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# generated data — reproducible from `uv run python scripts/generate_data.py`
+data/raw/
+data/staging/
+data/marts/
+*.duckdb
+
+# figures are regenerated, dashboard.html is committed
+reports/figures/
