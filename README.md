@@ -1,3 +1,15 @@
+<!-- ascii-art: pyfiglet + ascii-bin (CC0) -->
+```text
+._ _  _.._|  __|_._ | _. _ ___|o _.   o _|o_|___| _.|_
+| | |(_|| |<(/_|_|_)|(_|(_(/_ ||(_||_||(_|| |_\/|(_||_)
+                 |                |           /
+
+╭─────────────────────────────────────────────────────────────────────────╮
+│ A synthetic classifieds marketplace with a planted answer key. Every... │
+╰─────────────────────────────────────────────────────────────────────────╯
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
 # marketplace-liquidity-lab
 
 > **The platform never sees the sale.** Its liquidity metric is a seller's self-report
