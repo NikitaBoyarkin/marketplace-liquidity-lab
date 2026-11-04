@@ -337,10 +337,16 @@ def bootstrap_ci(
 # comparison table
 # ---------------------------------------------------------------------------
 def compare(df: pd.DataFrame, n_iters: int = 300) -> pd.DataFrame:
-    """One row per category plus a platform row: proxy, correction, proxy interval."""
+    """One row per category plus a platform row: proxy, correction, both intervals.
+
+    The naive estimate has always shipped an interval and the corrected one did not,
+    which made the *worse* estimator look like the more measured one. Both are resampled
+    the same way now (same listings, same draws) so the two columns are comparable.
+    """
     naive = naive_sell_through(df)
     corrected = corrected_sell_through(df)
     ci = bootstrap_ci(df, naive_sell_through, n_iters=n_iters)
+    corrected_ci = bootstrap_ci(df, corrected_sell_through, n_iters=n_iters)
 
     cohort = df[df["in_cohort"]] if "in_cohort" in df else df
     sizes = cohort.groupby("category_id").size().to_dict()
@@ -352,6 +358,8 @@ def compare(df: pd.DataFrame, n_iters: int = 300) -> pd.DataFrame:
             "corrected": corrected[cat],
             "naive_ci_low": ci[cat][0],
             "naive_ci_high": ci[cat][1],
+            "corrected_ci_low": corrected_ci[cat][0],
+            "corrected_ci_high": corrected_ci[cat][1],
         }
         for cat in sorted(sizes)
     ]
@@ -363,6 +371,8 @@ def compare(df: pd.DataFrame, n_iters: int = 300) -> pd.DataFrame:
             "corrected": corrected["platform"],
             "naive_ci_low": ci["platform"][0],
             "naive_ci_high": ci["platform"][1],
+            "corrected_ci_low": corrected_ci["platform"][0],
+            "corrected_ci_high": corrected_ci["platform"][1],
         }
     )
     return pd.DataFrame(rows)

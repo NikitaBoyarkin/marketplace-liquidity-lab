@@ -10,5 +10,5 @@ data/staging/
 data/marts/
 *.duckdb
 
-# figures are regenerated, dashboard.html is committed
+# figures are regenerated; no dashboard exists — the report is the deliverable
 reports/figures/

@@ -241,7 +241,7 @@ def test_every_quality_check_passes_on_real_data(raw: dict[str, pd.DataFrame]) -
     results = quality.run_all(raw)
     failed = {result.name: result.detail for result in results if not result.passed}
     assert not failed, f"failing quality checks: {failed}"
-    assert len(results) == 5
+    assert len(results) == len(quality.CHECKS) == 8
 
 
 def test_quality_check_names_and_uniqueness_detail(raw: dict[str, pd.DataFrame]) -> None:
@@ -250,18 +250,21 @@ def test_quality_check_names_and_uniqueness_detail(raw: dict[str, pd.DataFrame])
         "referential_integrity",
         "temporal_order",
         "duplicate_rate",
-        "contact_uniqueness",
+        "contact_density",
         "window_coverage",
+        "holdout_share",
+        "value_domains",
+        "funnel_consistency",
     }
 
-    uniqueness = results["contact_uniqueness"]
-    assert uniqueness.detail["rows"] == len(raw["contacts"])
-    assert uniqueness.detail["distinct_pairs"] <= uniqueness.detail["rows"]
+    density = results["contact_density"]
+    assert density.detail["rows"] == len(raw["contacts"])
+    assert density.detail["max_contacts_per_pair"] <= config.CONTACT_REPEAT_MAX
 
     duplicates = results["duplicate_rate"]
     shares = duplicates.detail["share_by_category"]
     assert set(shares) == set(raw["categories"]["category_id"])
-    assert all(0.0 <= value <= quality.MAX_DUPLICATE_SHARE for value in shares.values())
+    assert all(0.0 <= value <= config.MAX_DUPLICATE_SHARE for value in shares.values())
 
     temporal = results["temporal_order"]
     assert temporal.detail["removal_before_publish"] == 0

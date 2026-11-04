@@ -81,3 +81,37 @@ construction, the recovery test measures the generator, not the method. Mitigati
 structural, not rhetorical: the truth file is frozen and never imported by analysis
 (`tests/test_no_truth_leak.py`), the recovery bound is ±0.03 rather than exact, and the
 naive estimator's failure is asserted on a *pre-declared sign* it cannot be tuned toward.
+
+## Addendum — demand-sufficiency thresholds (2026-11-04)
+
+This section was **not** part of the original document. It records the thresholds that
+`liquidity/metrics.py` uses to label a (category × region) cell as one of four liquidity
+failure states, because they were declared in code and never written down here. Recording
+them now makes them auditable; it does **not** make them pre-registered, and the report
+labels them accordingly.
+
+| Threshold | Value | Meaning |
+|---|---:|---|
+| `DEMAND_FLOOR_SEARCHES_PER_DAY_CELL` | 8.0 | searches per day below which a cell is "no demand" (if it also has a high zero-result share) |
+| `DEMAND_FLOOR_SEARCHES_PER_DAY_CATEGORY` | 60.0 | the same floor for a category rollup, which pools six regions |
+| `HIGH_ZERO_RESULT_SHARE` | 0.05 | zero-result share above which a low-traffic cell counts as unmet demand |
+| `LOW_VIEW_RATE` | 0.10 | impressions-to-view rate below which a cell is "shown but not opened" |
+| `LOW_CONTACT_RATE` | 0.10 | view-to-contact rate below which a cell is "opened but not contacted" |
+
+Observed label distribution on this log: **38 `liquid`, 4 `no_demand`, 0 `no_views`,
+0 `no_contact`**. Two of the four states are unreachable at these cutoffs, because no cell
+falls below the 0.10 view or contact rate. This is reported in `reports/report.md` as a
+limit on the metric's resolution, not corrected by moving the cutoffs after seeing the data.
+
+## Addendum — what the monetisation guardrail actually compares (2026-11-04)
+
+The original H2c text named two guardrails without distinguishing their estimands. The
+analysis was split afterwards, and the report reflects the split:
+
+- `reply_rate_causal` — reply rate on **organic** contacts, treated sessions vs the holdout.
+- `reply_rate_descriptive` — reply rate on paid vs unpaid contacts. Different listings; a
+  boosted listing is a weak listing by construction, so this is a cross-section, not an
+  effect.
+
+Only the first can carry a causal reading. The decision rule below is unchanged and still
+keys on organic contacts falling.

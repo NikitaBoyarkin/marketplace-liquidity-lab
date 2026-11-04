@@ -1,6 +1,10 @@
 # Data strategy: CI regenerates the raw parquet from the seeded generator instead of
-# committing a sample — the log is ~14 MB of gitignored output and SEED=42 already makes
+# committing a sample — the log is ~10 MB of gitignored output and SEED=42 already makes
 # it reproducible, so a committed copy would just be a second source of truth that drifts.
+#
+# CI checks the artefacts the README actually claims: the two CLI readouts, the scorer,
+# the quality gates, and byte-level determinism of the generator. A green run that only
+# imports the package proves nothing about the numbers a reader is asked to trust.
 name: CI
 
 on:
@@ -11,17 +15,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
           enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --all-groups
+      - name: Install dependencies (locked)
+        run: uv sync --locked --all-groups --python ${{ matrix.python }}
 
       - name: Generate raw data (deterministic, SEED=42)
         run: make data
@@ -31,3 +39,31 @@ jobs:
 
       - name: Lint
         run: uv run ruff check .
+
+      # The readouts the README quotes. A broken CLI used to ship green.
+      - name: CLI smoke — analysis readouts
+        run: |
+          uv run python -m liquidity.bias            | tail -3
+          uv run python -m liquidity.monetization    | grep -E "incrementality|mde_80|srm"
+          uv run python -m liquidity.scoring         | tail -2
+          uv run python -m liquidity.metrics         | tail -3
+          uv run python -m liquidity.quality         | tail -1
+
+      - name: Quality gates pass on the frozen log
+        run: uv run python -m liquidity.quality | grep -q "all checks passed"
+
+      # Byte-level determinism: regenerate in place and compare. Generation takes seconds,
+      # so this is cheaper than caching and it is the claim the README makes.
+      - name: Determinism (seed 42)
+        run: |
+          before=$(cat data/raw/*.parquet _truth/ground_truth.json | sha256sum)
+          uv run python -m liquidity.generate >/dev/null
+          after=$(cat data/raw/*.parquet _truth/ground_truth.json | sha256sum)
+          if [ "$before" != "$after" ]; then
+            echo "::error::liquidity.generate is not deterministic — parquet or truth bytes changed"
+            exit 1
+          fi
+          echo "deterministic: $after"
+
+      - name: README numbers match the scorer
+        run: uv run pytest tests/test_scoring.py tests/test_report_claims.py tests/test_decision_memo.py -q

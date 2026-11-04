@@ -24,21 +24,54 @@ def raw() -> dict[str, pd.DataFrame]:
 # --------------------------------------------------------------------------- #
 # The causal contrast
 # --------------------------------------------------------------------------- #
-def test_incrementality_is_negative_and_material(raw: dict[str, pd.DataFrame]) -> None:
+def test_incrementality_is_negative_and_not_significant(raw: dict[str, pd.DataFrame]) -> None:
+    """The sign is the finding; the interval is the caveat.
+
+    This test used to pin the point estimate into ``[-0.030, -0.010]``, which demanded a
+    "material" effect from a p = 0.31 readout. Sign, interval coverage and significance
+    are the claims the data can support; the width is asserted separately, against the
+    MDE, in ``test_power_is_reported_and_the_effect_is_below_the_mde``.
+    """
     result = monetization.holdout_incrementality(raw)
 
     assert result["incrementality"] < 0, "displacement outweighs the promoted listing's gain"
-    assert -0.030 <= result["incrementality"] <= -0.010
     assert result["incrementality"] == pytest.approx(
         result["contacts_per_session_treated"] - result["contacts_per_session_holdout"],
         abs=TOLERANCE,
     )
-    # The bootstrap CI must bracket the point estimate it is built on. The holdout
-    # arm is only ~10% of sessions, so the interval is wide -- the sign of the point
-    # estimate is the finding, not the significance of the interval.
     assert result["ci_95_low"] <= result["incrementality"] <= result["ci_95_high"]
     assert 0.0 <= result["welch_p_value"] <= 1.0
+    assert result["welch_p_value"] > 0.05, "the effect is not significant; do not report it as proven"
+    assert result["significant_at_alpha"] is False
     assert result["sessions_treated"] > result["sessions_holdout"]
+
+
+def test_power_is_reported_and_the_effect_is_below_the_mde(
+    raw: dict[str, pd.DataFrame],
+) -> None:
+    """A readout smaller than its own MDE cannot distinguish "no effect" from "effect"."""
+    result = monetization.holdout_incrementality(raw)
+
+    assert result["mde_80"] > 0
+    assert result["standard_error"] > 0
+    assert result["mde_80"] == pytest.approx(2.801585 * result["standard_error"], rel=1e-4)
+    assert abs(result["incrementality"]) < result["mde_80"]
+    assert result["underpowered_for_its_own_effect"] is True
+    assert 0.05 <= result["mde_relative_to_holdout"] <= 0.09
+
+
+def test_srm_gate_passes_on_the_real_split_and_fails_on_drift(raw: dict[str, pd.DataFrame]) -> None:
+    """The 10% holdout is a design assumption; a silent drift must be visible."""
+    result = monetization.holdout_incrementality(raw)
+    srm = result["srm"]
+
+    assert srm["planned_holdout_share"] == pytest.approx(0.10)
+    assert srm["observed_holdout_share"] == pytest.approx(0.1002, abs=1e-3)
+    assert srm["p_value"] > 0.01
+    assert srm["passes_at_alpha"] is True
+
+    drifted = monetization.sample_ratio_check(treated_sessions=98_000, holdout_sessions=2_000)
+    assert drifted["passes_at_alpha"] is False, "a 2% holdout against a planned 10% must fail"
 
 
 def test_incrementality_rates_match_the_frozen_log(raw: dict[str, pd.DataFrame]) -> None:
@@ -74,34 +107,81 @@ def test_zero_result_sessions_are_excluded_from_the_denominator() -> None:
 # --------------------------------------------------------------------------- #
 # The guardrails
 # --------------------------------------------------------------------------- #
-def test_unpaid_contacts_fall_when_promoted_slots_are_shown(
+def test_organic_contacts_fall_when_promoted_slots_are_shown(
     raw: dict[str, pd.DataFrame],
 ) -> None:
-    guard = monetization.guardrails(raw)["unpaid_contacts_per_session"]
+    guard = monetization.guardrails(raw)["displacement"]["organic_contacts_per_session"]
 
     assert guard["treated"] < guard["holdout"]
     drop = (guard["holdout"] - guard["treated"]) / guard["holdout"]
-    assert 0.07 <= drop <= 0.14, f"unpaid contacts fell {drop:.1%}, expected 7-14%"
+    assert 0.07 <= drop <= 0.14, f"organic contacts fell {drop:.1%}, expected 7-14%"
     assert guard["relative_change"] < 0
+    assert guard["ci_95_high"] < 0, "the fall is distinguishable from zero"
 
 
-def test_paid_traffic_converts_to_a_conversation_less_often(
+def test_displacement_is_decomposed_into_slots_and_conversion(
     raw: dict[str, pd.DataFrame],
 ) -> None:
-    reply = monetization.guardrails(raw)["seller_reply_rate"]
+    """Contacts per session falls for two reasons; the guardrail must not merge them."""
+    displacement = monetization.guardrails(raw)["displacement"]
 
-    assert reply["paid"] < reply["unpaid"]
-    assert reply["paid"] == pytest.approx(0.5662, abs=2e-3)
-    assert reply["unpaid"] == pytest.approx(0.6436, abs=2e-3)
+    slots = displacement["organic_impressions_per_session"]
+    conversion = displacement["contacts_per_organic_impression"]
+
+    assert slots["relative_change"] < 0, "a promoted slot occupies an organic one"
+    assert conversion["relative_change"] < 0
+    assert conversion["ci_95_high"] < 0, "conversion per impression also falls, not just the count"
+    share = displacement["slot_arithmetic_share_of_drop"]
+    assert 0.30 <= share <= 0.55, f"slot arithmetic explains {share:.0%} of the drop"
+    # Both drops are needed to reconstruct the headline: neither replaces the other.
+    assert slots["treated"] > 10 and conversion["treated"] > 0.02
+
+
+def test_top_organic_positions_absorb_the_displacement(raw: dict[str, pd.DataFrame]) -> None:
+    """The stated mechanism is "organic is pushed down", so the mix must show it."""
+    mix = {row["position_bucket"]: row for row in monetization.guardrails(raw)["displacement"]["by_position"]}
+
+    assert set(mix) == {"1-3", "4-6", "7-10", "11-20"}
+    top = mix["1-3"]["relative_change"]
+    assert top < -0.15, f"top-3 organic impressions change {top:.1%}, expected a large fall"
+    for bucket in ("4-6", "7-10", "11-20"):
+        assert mix[bucket]["relative_change"] > top, "lower buckets suffer less than the top"
+
+
+def test_reply_rate_has_a_causal_and_a_descriptive_version(raw: dict[str, pd.DataFrame]) -> None:
+    """Paid vs unpaid compares different listings; only the holdout contrast is causal."""
+    guard = monetization.guardrails(raw)
+    causal = guard["reply_rate_causal"]
+    descriptive = guard["reply_rate_descriptive"]
+
+    assert descriptive["paid"] == pytest.approx(0.5662, abs=2e-3)
+    assert descriptive["unpaid"] == pytest.approx(0.6436, abs=2e-3)
+    assert descriptive["absolute_change"] < -0.05
+
+    # The causal version is flat: on the same listings, suppression barely moves replies.
+    assert abs(causal["absolute_change"]) < 0.01
+    assert causal["ci_95_low"] < 0 < causal["ci_95_high"]
+    assert causal["contacts_treated"] > causal["contacts_holdout"]
 
 
 def test_guardrails_are_reported_as_absolute_numbers(raw: dict[str, pd.DataFrame]) -> None:
     guard = monetization.guardrails(raw)
 
-    for key in ("treated", "holdout", "absolute_change", "relative_change"):
-        assert key in guard["unpaid_contacts_per_session"]
+    for key in ("treated", "holdout", "absolute_change", "relative_change", "ci_95_low", "ci_95_high"):
+        assert key in guard["displacement"]["organic_contacts_per_session"]
+        assert key in guard["displacement"]["contacts_per_organic_impression"]
+        assert key in guard["reply_rate_causal"]
     for key in ("paid", "unpaid", "absolute_change", "relative_change"):
-        assert key in guard["seller_reply_rate"]
+        assert key in guard["reply_rate_descriptive"]
+
+
+def test_the_two_contrasts_are_not_mixed_under_one_label(raw: dict[str, pd.DataFrame]) -> None:
+    """Regression guard: the old table labelled a paid/unpaid cross-section as holdout."""
+    guard = monetization.guardrails(raw)
+
+    assert "seller_reply_rate" not in guard
+    assert "unpaid_contacts_per_session" not in guard
+    assert set(guard) == {"displacement", "reply_rate_causal", "reply_rate_descriptive"}
 
 
 # --------------------------------------------------------------------------- #
@@ -156,6 +236,9 @@ def test_decision_rolls_back_on_a_dirty_guardrail(raw: dict[str, pd.DataFrame]) 
     assert "roll back" in recommendation or "cap" in recommendation
     assert verdict["reason"]
     assert verdict["preregistration"].endswith("preregistration.md")
+    # The decision carries the decomposition, so a reader can see how much of the
+    # "dirty guardrail" is arithmetic rather than a conversion effect.
+    assert verdict["guardrail_decomposition"]["slot_arithmetic_share_of_drop"] > 0
     assert verdict["applied_rules"]
     # The guardrail row is the rule that must dominate.
     assert "unpaid contacts" in verdict["applied_rules"][0]["outcome"].lower()

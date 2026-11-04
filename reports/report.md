@@ -12,7 +12,10 @@ Evidence classes follow `.claude/rules/evidence-ledger.md`: **Verified** (a chec
 |---|---|---|
 | `uv run python -m liquidity.bias` | per-category naive / corrected sell-through table | Verified |
 | `uv run python -m liquidity.monetization` | naive pre/post, holdout contrast, guardrails, decision | Verified |
-| `uv run pytest tests/test_bias_recovery.py tests/test_monetization.py tests/test_naive_must_fail.py` | 20 passed (4 + 11 + 5) | Verified |
+| `uv run pytest tests/test_bias_recovery.py tests/test_monetization.py tests/test_naive_must_fail.py` | 25 passed (4 + 16 + 5) | Verified |
+| `uv run python -m liquidity.scoring` | estimates next to the planted truth, one command | Verified |
+| `uv run python -m liquidity.quality` | eight raw-layer gates, all passing, each with a fault-injection test in `tests/test_quality_gates.py` | Verified |
+| `uv run python -m liquidity.metrics` | cohort liquidity over W=7 and W=30, demand sufficiency, zero-result | Verified |
 | read `_truth/ground_truth.json` | planted latent truth and experiment block | Verified |
 
 ## Executive summary
@@ -54,6 +57,69 @@ The proxy errs in both directions on every planted category. Two examples from t
 | True sales left unmarked | all five (`sold_share_marked_sold` ranges 0.549–0.900) | `_truth/ground_truth.json` `latent.removal_confusion_by_category` | Verified |
 | Unsold listings marked sold | all five (`unsold_share_marked_sold` ranges 0.018–0.161) | same | Verified |
 | Which bias dominates | `auto` and `services`: underreporting dominates and is large; `goods` and `realty`: the two directions nearly cancel; `jobs`: slight net underreport | per-category errors in §H1 | Inferred |
+
+## Liquidity and demand sufficiency — the blocks the first version of this report omitted
+
+These metrics were computed from the start (`liquidity/metrics.py`, `liquidity_by_cohort`,
+`demand_sufficiency`, `zero_result_rate`) and appeared in no artefact: the report opened
+straight into the proxy audit. A repository called *liquidity lab* that reports only
+sell-through is reporting the correction of a metric it never shows. Both blocks are here now,
+and each carries the caveat that a reader needs to not over-read it.
+
+### Cohort liquidity (cohort = listings published in the first 30 days; window 30 days)
+
+| Category | Cohort | Listings with ≥1 contact | Dead listings (0 views) | Median hours to first contact | p90 hours | Duplicate share |
+|---|---:|---:|---:|---:|---:|---:|
+| auto | 624 | 0.8782 | 0.0064 | 38.0 | 227.9 | 0.0689 |
+| goods | 474 | 0.8861 | 0.0042 | 31.4 | 245.6 | 0.1371 |
+| jobs | 195 | 0.8923 | 0.0000 | 43.1 | 295.3 | 0.1026 |
+| realty | 290 | 0.8897 | 0.0000 | 35.1 | 216.0 | 0.0759 |
+| services | 373 | 0.9062 | 0.0054 | 34.9 | 185.8 | 0.0536 |
+| **platform** | **1 956** | **0.8885** | **0.0041** | **35.9** | **229.8** | **0.0869** |
+
+Verified — `uv run python -m liquidity.metrics`. Two readings matter more than the numbers:
+
+- **The category spread is small (0.878–0.906), the tail is not.** p90 time-to-first-contact runs
+  from 186 to 295 hours across categories, so "liquid" on the contact dimension can still mean
+  "two weeks if you are in the slow decile".
+- **Dead listings are almost absent (0.41%), which is not a compliment to the marketplace.** A
+  listing that is published but never shown is indistinguishable from one that is shown and
+  ignored in every metric above; this is why the demand block exists.
+
+### The window matters: W=7 versus W=30
+
+| Window | Listings with ≥1 contact | Dead listings | Median hours to first contact |
+|---|---:|---:|---:|
+| 7 days | 0.7520 | 0.0148 | 25.9 |
+| 30 days | 0.8885 | 0.0041 | 35.9 |
+
+Verified — `liquidity_by_window`. Thirteen points of "liquidity" arrive between day 7 and day 30,
+and the median contact day *moves later* when the window widens (25.9 → 35.9 hours), which is the
+signature of a long tail rather than of uniform demand. Reporting only the 30-day number would let
+a reader conclude the market clears in a day and a half.
+
+### Demand sufficiency — and why the quadrant cannot be trusted
+
+| Population tier | Searches | Zero-result searches | Zero-result share |
+|---|---:|---:|---:|
+| 1 (largest regions) | 17 982 | 296 | 1.65% |
+| 2 | 13 185 | 568 | 4.31% |
+| 3 (smallest) | 8 833 | 795 | 9.00% |
+| **all** | **40 000** | **1 659** | **4.15%** |
+
+Verified — `zero_result_rate`. Unmet demand is five times more common in the smallest tier than in
+the largest, which is the supply-side signal the contact metrics cannot see.
+
+The intended four-way quadrant (`no_demand` / `no_views` / `no_contact` / `liquid`) collapses on
+this log: **38 cells are `liquid` and 4 are `no_demand`; `no_views` and `no_contact` never occur.**
+The cutoffs (recorded in `docs/preregistration.md`, addendum 2026-11-04 — post-hoc, not
+pre-registered) put the view-rate and contact-rate floors at 0.10, while the observed minimum
+across cells is 0.17 and 0.176. Two of the four states are therefore unreachable, and a cell with a
+0.20 view rate is labelled exactly as liquid as one with 0.90.
+
+This is reported as a limit on the metric's resolution rather than repaired by moving the
+thresholds after seeing the labels. The honest summary is that on this log the quadrant separates
+"no demand" from everything else and says nothing about the two failure modes it was built for.
 
 ## H1 — proxy audit
 
@@ -160,19 +226,53 @@ H2a was preregistered as expected to fail: the naive number is positive, but it 
 | Significant at α = 0.05 | no | Verified |
 | 95% percentile bootstrap CI on the difference | −0.034576 to +0.008435 | Verified |
 | Zero-result sessions excluded from the denominator | yes (`liquidity/monetization.py:73`) | Verified |
+| Standard error of the difference | 0.011377 | Verified |
+| **MDE at 80% power (α = 0.05)** | **0.031873 = 6.79% of the holdout rate** | Verified |
+| Observed effect below its own MDE | yes (2.47% < 6.79%) | Verified |
+| Sample ratio check | 10.02% observed vs 10% planned; χ² = 0.023, p = 0.8795 | Verified |
 
-**H2b: negative sign, Welch p ≈ 0.308, zero not excluded — the effect is not proven.**
+**H2b: negative sign, Welch p ≈ 0.308, zero not excluded — the effect is not proven, and the design could not have proven an effect of this size.**
 
-The point estimate is negative and material relative to the baseline (−2.5%), but the holdout arm is only ~10% of sessions, the interval includes zero, and the test is not significant. The correct statement is directional: paid visibility shows no proven gain in contacts per session and a negative point estimate consistent with displacement. It is not evidence that paid visibility destroys contacts either.
+The point estimate is negative (−2.5% relative), the holdout arm is only ~10% of sessions, the interval includes zero, and the test is not significant. The MDE is the load-bearing number: at 80% power this design detects a 6.8% relative change, and the observed effect is 2.5%, so a null readout was the expected outcome regardless of the true sign. The correct statement is directional: paid visibility shows no proven gain in contacts per session and a negative point estimate consistent with displacement. It is not evidence that paid visibility destroys contacts, and the absence of significance here is not evidence of no effect. The sample-ratio check (`liquidity/monetization.py::sample_ratio_check`) is reported because a silent drift in the holdout share would widen every interval without failing anything.
 
 ## H2c — guardrails
 
-| Guardrail | Treated / paid | Holdout / unpaid | Absolute change | Relative change | Dirty? | Class |
-|---|---:|---:|---:|---:|---|---|
-| Unpaid-listing contacts per session | 0.418401 | 0.469685 | −0.051284 | −10.92% | Yes | Verified |
-| Seller reply rate | 0.566203 (paid) | 0.643627 (unpaid) | −0.077424 | −12.03% | Yes | Verified |
+The guardrail section was rewritten: it used to print a paid-vs-unpaid cross-section under a
+"treated / holdout" header. Two contrasts are now separated by what they can support.
 
-The dirty threshold is a 1% relative fall (`liquidity/monetization.py:35`, `GUARDRAIL_TOLERANCE = 0.01`). Both guardrails fail by an order of magnitude more than that. Paid traffic is less likely to start a conversation than organic traffic, and organic listings lose about a tenth of their contacts when promoted slots are present. A primary-only readout would have called H2a a win; the guardrails reverse that.
+**Causal contrasts (treated vs randomised holdout, same listings):**
+
+| Guardrail | Treated | Holdout | Absolute change | Relative change | 95% CI | Class |
+|---|---:|---:|---:|---:|---|---|
+| Organic contacts per session | 0.418401 | 0.469685 | −0.051284 | −10.92% | −0.0730 to −0.0279 | Verified |
+| Organic impressions per session | 11.496203 | 12.070778 | −0.574575 | −4.76% | −0.6847 to −0.4639 | Verified |
+| Contacts per organic impression | 0.036395 | 0.038911 | −0.002516 | −6.47% | −0.00418 to −0.00058 | Verified |
+| Reply rate on organic contacts | 0.643080 | 0.648004 | −0.004925 | −0.76% | −0.0273 to +0.0190 | Verified |
+
+**Descriptive contrast, different listings (not a holdout result):**
+
+| Guardrail | Paid | Unpaid | Absolute change | Class |
+|---|---:|---:|---:|---|
+| Seller reply rate | 0.566203 | 0.643627 | −0.077424 | Verified (descriptive) |
+
+Three things follow, and two of them cut against the original wording.
+
+1. **The reply-rate guardrail is listing selection, not a causal effect.** On the same organic
+   listings the holdout contrast moves the reply rate by −0.5 pp with zero inside the interval. The
+   −7.7 pp paid-vs-unpaid gap reflects that boosted listings are weak listings by construction.
+2. **Part of the organic-contacts drop is arithmetic.** A promoted slot occupies an organic one, so
+   organic impressions per session fall 4.8% by construction; conversion per organic impression falls
+   a further 6.5% and that interval excludes zero. `slot_arithmetic_share_of_drop` attributes ~42% of
+   the headline to the slot count and ~58% to conversion.
+3. **The displacement lands at the top of the SERP.** Organic impressions per session in positions
+   1–3 fall 21.6%, while positions 4–6, 7–10 and 11–20 move by −1.7%, −2.3% and −1.6%. A product
+   decision about capping promoted slots is about the top of the page, not the average.
+
+The dirty threshold is a 1% relative fall (`liquidity/monetization.py`, `GUARDRAIL_TOLERANCE = 0.01`)
+and it is applied to organic contacts per session, as preregistered. That guardrail is still dirty
+(−10.9%, interval clear of zero), so the preregistered roll-back rule still binds. What changed is
+the evidence behind the verdict: it now rests on the conversion slope and the top-of-SERP mix, not on
+a reply-rate delta that is selection.
 
 ## Decision per preregistration
 
@@ -180,9 +280,9 @@ The decision rules are parsed from `docs/preregistration.md` at runtime (`liquid
 
 | Rule (verbatim from the preregistration) | Condition met? | Applied | Class |
 |---|---|---|---|
-| "H2c dirty (unpaid contacts fall)" → "roll back, whatever H2b says" | yes: unpaid contacts −10.9% | first; dominates the recommendation | Verified |
+| "H2c dirty (unpaid contacts fall)" → "roll back, whatever H2b says" | yes: organic contacts per session −10.9%, CI −7.3% to −2.8% | first; dominates the recommendation | Verified |
 | "H2b < 0" → "paid visibility is partly a tax on organic reach; price it as such and cap slots per SERP" | yes: incrementality −0.0116 | second; reported alongside the primary | Verified |
-| "H1a fails" → "the proxy is defensible at platform level; report per-category error only as a caveat" | H1a failed, so the row applies as written | see caveat below | Verified (rule) / Inferred (fit) |
+| "H1a fails" → "the proxy is defensible at platform level; report per-category error only as a caveat" | H1a failed, so the rule fires — but its stated consequence is wrong on this data: failure here means the errors compound (0.0657 > 0.0544), not that the proxy is small | not applied as written; see caveat below | Verified (rule) / Inferred (fit) |
 
 | Decision | Text | Class |
 |---|---|---|
@@ -190,6 +290,20 @@ The decision rules are parsed from `docs/preregistration.md` at runtime (`liquid
 | Liquidity reporting | Report sell-through per category with the corrected estimator; do not quote the single platform number alone. The platform proxy is 6.6 pp (21%) below truth on this snapshot, so the preregistered "defensible at platform level" branch should not be read as "the platform number is accurate". | Inferred |
 
 Two gaps in the preregistered decision table are worth recording. First, there is no row for "H1a fails **and** H1b recovers" — the only row that pairs a working correction with per-category reporting requires H1a to hold. Second, the "H1a fails → defensible" branch assumes failure means small errors, whereas the observed failure is compounding. Both are gaps in the document, not in the data.
+
+## Reproducibility mechanisms
+
+Two invariants in this report are enforced by tests rather than by discipline, and both were
+mechanisms that could not fail before this revision:
+
+| Mechanism | What it prevents | Where |
+|---|---|---|
+| Fault injection per quality gate | A gate staying green on broken data. The previous `contact_uniqueness` asserted `distinct_pairs <= rows` (true for any frame) and `window_coverage` compared two config constants. | `tests/test_quality_gates.py` |
+| Single source of constants | `metrics` keeping its own `COHORT_WINDOW_DAYS` beside `config.COHORT_DAYS`, and `monetization` running 1 000 draws at seed 7 while config said 2 000 at seed 42. Editing one side used to split the report silently. | `tests/test_config_single_source.py` |
+
+The corrected estimator now also ships a bootstrap interval of its own (`bias.compare` →
+`corrected_ci_low/high`), resampled the same way as the naive one. Previously only the estimator
+being criticised had an interval, which made the worse number look like the more measured one.
 
 ## Limitations
 
@@ -227,6 +341,8 @@ Two gaps in the preregistered decision table are worth recording. First, there i
 | H2b "negative sign, Welch p ≈ 0.308, zero not excluded — not proven" | Verified | same |
 | Guardrails: unpaid contacts −10.92%, reply rate −12.03% | Verified | `liquidity.monetization.guardrails`; `liquidity/monetization.py:35` |
 | Decision: roll back; else tax + cap slots/SERP | Verified (rule) | `liquidity.monetization.decision`; `docs/preregistration.md` decision table |
+| Reply-rate guardrail is descriptive, not causal (−0.5 pp on the holdout contrast) | Verified | `liquidity.monetization.guardrails` → `reply_rate_causal` / `reply_rate_descriptive` |
+| 42% of the organic-contacts drop is slot arithmetic (4.8% of 10.9%) | Verified | `guardrails()["displacement"]["slot_arithmetic_share_of_drop"]` |
 | Prereg "H1a fails → defensible" misfits compounding failure | Inferred | `docs/preregistration.md` decision table vs §H1a |
 | Prereg signs for goods/realty/jobs mismatched but unasserted | Verified (data) / gap (mechanism) | `tests/test_naive_must_fail.py:25-36`; `docs/preregistration.md:37-43` |
 | Welch independence, per-listing validation, window sensitivity, seed replication | Not verified | `liquidity/monetization.py:77-103, 161-189`; `tests/test_bias_recovery.py`; `liquidity/monetization.py:109-155`; `liquidity/config.py:20-27` |

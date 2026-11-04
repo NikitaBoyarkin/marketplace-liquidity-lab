@@ -76,8 +76,12 @@ def test_compare_table_shape(cohort):
         "corrected",
         "naive_ci_low",
         "naive_ci_high",
+        "corrected_ci_low",
+        "corrected_ci_high",
     ]
     assert table["category"].iloc[-1] == "platform"
     assert table["cohort_size"].iloc[-1] == int(len(cohort))
     assert (table["naive_ci_low"] <= table["naive"]).all()
     assert (table["naive"] <= table["naive_ci_high"]).all()
+    assert (table["corrected_ci_low"] <= table["corrected"]).all()
+    assert (table["corrected"] <= table["corrected_ci_high"]).all()

@@ -6,7 +6,7 @@ liquidity, not a transaction count.
 
 Three conventions are load-bearing and are applied everywhere:
 
-* **cohort** -- listings with ``publish_day < COHORT_WINDOW_DAYS``. A cohort is
+* **cohort** -- listings with ``publish_day < config.COHORT_DAYS``. A cohort is
   fixed by publish time, never by "still active at the end of the window":
   conditioning on survival flatters every liquidity number.
 * **contact** -- one distinct ``(buyer_id, listing_id)`` pair. Repeat contacts by
@@ -24,25 +24,33 @@ from typing import Any
 import duckdb
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
-SQL_DIR = PROJECT_ROOT / "sql"
+from liquidity import config
+
+PROJECT_ROOT = config.PROJECT_ROOT
+RAW_DIR = config.RAW_DIR
+SQL_DIR = config.SQL_DIR
 
 # --- Cohort definition -------------------------------------------------------
-COHORT_WINDOW_DAYS = 30.0
+# The cohort is fixed by publish time (config.COHORT_DAYS); the observation window is a
+# separate number (config.LIQUIDITY_WINDOW_DAYS). They used to be the same parameter,
+# which made a W=7 readout impossible and let the cohort definition drift from config.
 
 PLATFORM = "platform"
 ALL_REGIONS = "all"
 
 # --- Demand-sufficiency thresholds -------------------------------------------
-# Fixed before the quadrant labels were looked at, so the labels cannot be fitted
-# to a story. A "cell" is one (category, region); a category rollup pools six
-# regions and therefore needs its own, much higher floor.
-DEMAND_FLOOR_SEARCHES_PER_DAY_CELL = 8.0
-DEMAND_FLOOR_SEARCHES_PER_DAY_CATEGORY = 60.0
-HIGH_ZERO_RESULT_SHARE = 0.05
-LOW_VIEW_RATE = 0.10
-LOW_CONTACT_RATE = 0.10
+# Declared in `liquidity/config.py` and recorded in `docs/preregistration.md` as a dated
+# addendum. They were *not* written down before the labels were computed — an earlier
+# docstring claimed they were, which made the claim unfalsifiable. On this log the
+# quadrant collapses to 38 `liquid` and 4 `no_demand`; `no_views` and `no_contact` are
+# unreachable at these thresholds because the observed view and contact rates never fall
+# below 0.10 in any cell. That is a finding about the metric's resolution, reported in
+# `reports/report.md` rather than fixed by re-tuning the cutoffs after the fact.
+DEMAND_FLOOR_SEARCHES_PER_DAY_CELL = config.DEMAND_FLOOR_SEARCHES_PER_DAY_CELL
+DEMAND_FLOOR_SEARCHES_PER_DAY_CATEGORY = config.DEMAND_FLOOR_SEARCHES_PER_DAY_CATEGORY
+HIGH_ZERO_RESULT_SHARE = config.HIGH_ZERO_RESULT_SHARE
+LOW_VIEW_RATE = config.LOW_VIEW_RATE
+LOW_CONTACT_RATE = config.LOW_CONTACT_RATE
 
 QUADRANTS = ("no_demand", "no_views", "no_contact", "liquid")
 
@@ -109,9 +117,14 @@ def _cohort_stats(part: pd.DataFrame) -> dict[str, Any]:
 def _per_listing_cohort(
     df: dict[str, pd.DataFrame], window_days: float
 ) -> pd.DataFrame:
-    """One row per cohort listing with the primitives the shares are built from."""
+    """One row per cohort listing with the primitives the shares are built from.
+
+    The cohort is *always* ``publish_day < config.COHORT_DAYS``; ``window_days`` only
+    sets how long each listing is observed after publish. Passing a shorter window
+    therefore censors observations, it does not shrink the cohort.
+    """
     listings = df["listings"]
-    cohort = listings[listings["publish_day"] < window_days]
+    cohort = listings[listings["publish_day"] < config.COHORT_DAYS]
     publish = cohort.set_index("listing_id")["publish_day"]
     cohort_ids = publish.index
 
@@ -147,7 +160,7 @@ def _per_listing_cohort(
 
 
 def liquidity_by_cohort(
-    df: dict[str, pd.DataFrame], window_days: float = COHORT_WINDOW_DAYS
+    df: dict[str, pd.DataFrame], window_days: float = config.LIQUIDITY_WINDOW_DAYS
 ) -> pd.DataFrame:
     """Liquidity of the publish cohort, per category x region plus rollups.
 
@@ -190,7 +203,7 @@ def liquidity_by_cohort(
 
 
 def cohort_contact_share_sql(
-    raw_dir: Path | str = RAW_DIR, window_days: float = COHORT_WINDOW_DAYS
+    raw_dir: Path | str = RAW_DIR, window_days: float = config.LIQUIDITY_WINDOW_DAYS
 ) -> pd.DataFrame:
     """Cohort contact share per category, straight from ``sql/cohort_liquidity.sql``."""
     return run_sql("cohort_liquidity.sql", raw_dir, WINDOW_DAYS=window_days)
@@ -368,6 +381,19 @@ def zero_result_rate(df: dict[str, pd.DataFrame]) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+def liquidity_by_window(df: dict[str, pd.DataFrame]) -> dict[int, pd.DataFrame]:
+    """The same cohort measured over the short and the full observation window.
+
+    Both windows are declared in ``config`` (7 and 30 days). The pair exists because a
+    30-day readout hides the fact that most liquidity forms early: comparing the two is
+    the cheapest guard against reading a long window as "slow market".
+    """
+    return {
+        int(window): liquidity_by_cohort(df, window_days=float(window))
+        for window in (config.SHORT_WINDOW_DAYS, config.LIQUIDITY_WINDOW_DAYS)
+    }
+
+
 def run() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load the raw log and return the cohort, demand and zero-result frames."""
     frames = load()
@@ -380,8 +406,14 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 if __name__ == "__main__":
     cohort_frame, demand_frame, zero_frame = run()
-    print("=== Cohort liquidity (publish_day < 30) ===")
+    print(f"=== Cohort liquidity (publish_day < {config.COHORT_DAYS}, window 30 d) ===")
     print(cohort_frame.to_string(index=False))
+
+    print("\n=== Platform row by observation window ===")
+    for window, frame in liquidity_by_window(load()).items():
+        row = frame[(frame["category_id"] == PLATFORM) & (frame["region_id"] == ALL_REGIONS)]
+        shares = row[["listings_with_contact", "dead_listing_share"]].to_dict("records")[0]
+        print(f"W={window:>2} d  {shares}")
     print("\n=== Demand sufficiency (per category x region) ===")
     print(demand_frame.to_string(index=False))
     print("\n=== Zero-result rate by population tier ===")
