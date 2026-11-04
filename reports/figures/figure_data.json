@@ -1,0 +1,115 @@
+{
+  "figures": {
+    "01_sell_through_audit": {
+      "auto": {
+        "corrected": 0.325321,
+        "corrected_error": 0.016026,
+        "naive": 0.182692,
+        "naive_error": -0.126603,
+        "true": 0.309295
+      },
+      "goods": {
+        "corrected": 0.42616,
+        "corrected_error": 0.002109,
+        "naive": 0.421941,
+        "naive_error": -0.00211,
+        "true": 0.424051
+      },
+      "jobs": {
+        "corrected": 0.353846,
+        "corrected_error": 0.015384,
+        "naive": 0.307692,
+        "naive_error": -0.03077,
+        "true": 0.338462
+      },
+      "platform": {
+        "corrected": 0.318507,
+        "corrected_error": 0.011513,
+        "naive": 0.241309,
+        "naive_error": -0.065685,
+        "true": 0.306994
+      },
+      "realty": {
+        "corrected": 0.141379,
+        "corrected_error": 0.010345,
+        "naive": 0.131034,
+        "naive_error": 0.0,
+        "true": 0.131034
+      },
+      "services": {
+        "corrected": 0.289544,
+        "corrected_error": 0.016086,
+        "naive": 0.160858,
+        "naive_error": -0.1126,
+        "true": 0.273458
+      }
+    },
+    "02_error_vs_tolerance": {
+      "corrected_errors_pp": {
+        "auto": 1.602551,
+        "goods": 0.210934,
+        "jobs": 1.538415,
+        "platform": 1.151316,
+        "realty": 1.034531,
+        "services": 1.608624
+      },
+      "tolerance_pp": 3.0,
+      "worst_corrected_error_pp": 1.608624,
+      "worst_naive_error_pp": 12.660269
+    },
+    "03_separator_sensitivity": {
+      "best_cutoff_days": 4.0,
+      "best_worst_error_pp": 1.034531,
+      "categories": 5,
+      "declared_band_cutoffs_ok": [
+        4.0,
+        6.0
+      ],
+      "failing_categories_by_cutoff": {
+        "1": 5,
+        "1.5": 5,
+        "10": 3,
+        "2": 5,
+        "3": 4,
+        "3.5": 4,
+        "4": 0,
+        "4.5": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0,
+        "8": 0
+      },
+      "recovery_band_days": [
+        4.0,
+        8.0
+      ],
+      "recovery_band_worst_error_pp": 2.724346,
+      "tolerance_pp": 3.0
+    },
+    "04_incrementality_vs_mde": {
+      "ci_95_high": 0.008435,
+      "ci_95_low": -0.034576,
+      "effect_to_mde": 0.363959,
+      "incrementality": -0.011601,
+      "mde_80": 0.031873,
+      "relative_change": -0.024699,
+      "welch_p_value": 0.307941
+    },
+    "05_boost_waterfall": {
+      "conversion_pct": -6.46658,
+      "holdout": 0.469685,
+      "slot_arithmetic_pct": -4.760052,
+      "slot_share_of_drop": 0.423996,
+      "total_pct": -10.91882,
+      "treated": 0.418401
+    },
+    "06_position_mix": {
+      "position_1-3_relative_change": -0.215693,
+      "position_11-20_relative_change": -0.015883,
+      "position_4-6_relative_change": -0.017282,
+      "position_7-10_relative_change": -0.022707
+    }
+  },
+  "generated_by": "uv run python -m liquidity.scoring --figures",
+  "note": "every number each PNG draws; a PNG is a rendering of these values"
+}

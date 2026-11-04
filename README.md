@@ -93,6 +93,8 @@ scorer and by the tests — never by the analysis modules:
 Errors are computed from unrounded estimates, so hand-subtracting the displayed columns can differ
 in the fourth decimal.
 
+![Naive versus corrected sell-through per category, with the latent truth marked](reports/figures/01_sell_through_audit.png)
+
 **H1a is FALSIFIED.** The preregistration predicted the platform-level aggregate would be closer to
 truth than the average category (specifically `|platform error| < mean(|category error|) / 2`). It
 is the opposite: the platform error is 0.0657 while the mean absolute category error is 0.0544 —
@@ -103,8 +105,9 @@ not as independent validation.** The correction lands within ±0.03 on all five 
 0.0161 (`tests/test_bias_recovery.py`). The sensitivity run is what qualifies that result: drop the
 short reply-to-removal separator — the feature the preregistration actually specified — and the
 correction misses on all five categories (worst +0.121); push the cutoff to 2 days and it misses
-again; it recovers truth only for cutoffs of roughly 4–6 days, which is where the generator places
-its own sale rule (`SOLD_REPLY_LAG_MAX = 4.5`, `liquidity/generate.py:290`). So the estimator
+again; a cutoff sweep puts its recovery band at roughly 4–8 days, which is where the generator places
+its own sale rule (`SOLD_REPLY_LAG_MAX = 4.5`, `liquidity/generate.py:290`) — Figure 3 in
+`reports/report.md` derives that band from the failure count instead of declaring it. So the estimator
 demonstrates that a mixture recovers truth *when the separator is correctly specified* — it does not
 show that an analyst without the DGP would have found that separator.
 `tests/test_separator_sensitivity.py` binds both halves of this claim.
@@ -147,6 +150,8 @@ negative point estimate consistent with displacement" — not "paid visibility d
 not "no effect". The sample-ratio check is reported for the same reason: a silent drift in the 10%
 holdout would widen every interval above without failing anything (`sample_ratio_check`).
 
+![The incrementality estimate against the minimum detectable effect](reports/figures/04_incrementality_vs_mde.png)
+
 ### 3. The guardrail is dirty — and 42% of the drop is a slot count
 
 Two contrasts, kept apart because they support different claims. Only the holdout ones can carry a
@@ -176,6 +181,8 @@ about. The position mix shows where it lands — organic impressions in position
 per session while positions 4–20 move by 1.5–2.3%, so the top of the SERP is what the promoted slots
 eat (`liquidity/monetization.py::guardrails`).
 
+![Waterfall of the organic-contacts drop into slot arithmetic and conversion](reports/figures/05_boost_waterfall.png)
+
 Under the preregistered rule — parsed from `docs/preregistration.md`, not restated in code — the
 decision keys on organic contacts falling, and they do fall, so the rule still binds: **roll back,
 whatever H2b says**; and because H2b is negative, **price paid visibility as a tax on organic reach
@@ -191,7 +198,7 @@ compares "all promoted slots suppressed" with "shown", never 1, 2 or 3 slots.
 The suite pins the estimators rather than every cell of the tables: the corrected errors against
 their tolerance, the treated/holdout rates, the guardrail shares and the separator sensitivity above.
 Table values not asserted by a test are reproducible from the commands in Quick start —
-`uv run pytest` → 115 passed.
+`uv run pytest` → 126 passed.
 
 ### 4. Two invariants that used to be decoration
 
@@ -226,14 +233,23 @@ Both are mechanisms now, and both are worth reading before trusting the numbers 
   `tests/test_no_truth_leak.py` asserts that reader set is exactly `{scoring.py}`; adding an
   import elsewhere turns the suite red.
 - **The validity band is a tested artifact, not a caveat.** Remove the reply-to-removal separator
-  or move the cutoff outside roughly 4–6 days and the correction misses on all five categories —
+  or move the cutoff below 4 days and the correction misses on at least three categories (worst
+  24 pp; below 2 days, all five) —
   `tests/test_separator_sensitivity.py` (`test_without_the_separator_the_correction_fails`,
   `test_the_separator_cutoff_is_not_generic`, `test_recovery_holds_across_the_working_band`).
 - **The full report is part of the repository, not an appendix.** `reports/report.md` carries the
   liquidity and demand-sufficiency blocks (cohort contact share, dead listings, time to first
   contact, zero-result by population tier, the W=7 vs W=30 comparison), ten numbered limitations and
   a claims-to-artefact table — `tests/test_report_claims.py` fails if its numbers drift from the code.
-- **The five-minute check and the transferable piece are one run.** `uv run pytest` → 115 passed
+- **Every figure is bound to the code that produced it.** Each PNG is written next to
+  `reports/figures/figure_data.json`, which records every number it drew; `make figures`
+  regenerates both. `tests/test_figures.py` rebuilds that payload and fails when the committed one
+  drifts, compares the plotted values against `metrics` / `monetization` / `scoring` directly, and
+  holds the separator figure's recovery band to the same tolerance the estimator tests use. The
+  truth-overlay figures live in `liquidity/scoring.py`, not in `figures.py`, because the no-leak
+  test fixes the truth-reader set at exactly one module — a figure module that opened the key would
+  make the audit's central claim false.
+- **The five-minute check and the transferable piece are one run.** `uv run pytest` → 126 passed
   re-derives every asserted cell (corrected errors, treated/holdout rates, guardrail shares,
   separator sensitivity) from `data/raw/`; `liquidity/monetization.py` is the part that moves to
   another "did the paid surface create demand or relocate it" question, because it contrasts the
@@ -247,6 +263,7 @@ Both are mechanisms now, and both are worth reading before trusting the numbers 
 ```bash
 uv sync --all-groups
 make all                              # generates data/raw (seconds), then pytest + ruff
+make figures                          # renders reports/figures/*.png + the payload they drew
 uv run python -m liquidity.scoring    # estimates next to the planted truth
 uv run python -m liquidity.bias       # observable-only audit table, no truth
 ```
@@ -269,12 +286,15 @@ marketplace-liquidity-lab/
 │   ├── bias.py           # proxy audit, EM correction, bootstrap CI
 │   ├── scoring.py        # scores the estimators against the key (only truth reader)
 │   ├── monetization.py   # naive pre/post vs holdout, guardrails, decision
+│   ├── figures.py        # observable figures, house style, no truth access
 │   └── config.py         # windows, seeds, tolerances (single source)
 ├── sql/                  # cohort_liquidity.sql, zero_result.sql
 ├── docs/                 # preregistration.md, decision-memo.md, data_dictionary.md, brief.md
 ├── reports/report.md     # the full evidence-classed report, including the limitations
+├── reports/figures/      # six PNGs + figure_data.json (every number each PNG drew)
 ├── LICENSE               # MIT
-├── tests/                # 115 tests, including the no-leak, must-fail and separator-sensitivity guards
+├── tests/                # 126 tests, including the no-leak, must-fail, figure-freshness and
+│                         #   separator-sensitivity guards
 ├── _truth/               # frozen answer key — read by liquidity/scoring.py and tests only
 ├── data/                 # raw/, staging/, marts/ (gitignored, regenerable)
 └── scripts/generate_data.py

@@ -134,6 +134,14 @@ thresholds after seeing the labels. The honest summary is that on this log the q
 
 The proxy's own sampling interval excludes the latent truth for `auto` and `services`, so the miss is not sampling noise.
 
+![Naive versus corrected sell-through per category, with the latent truth marked](figures/01_sell_through_audit.png)
+
+*Figure 1 — the platform proxy (open circle) and the EM correction (filled circle) against the latent truth (coral tick), per category and for the platform. Bars are 95% bootstrap intervals. The platform row is separated because it is the number the platform ships. Source: `liquidity.scoring.scored_table()`.*
+
+![Signed error of both estimators against the ±3 pp recovery tolerance](figures/02_error_vs_tolerance.png)
+
+*Figure 2 — the same estimates as signed errors, in percentage points, against the `TOL_RECOVERY = 0.03` band. The proxy is outside the band on `auto`, `services` and the platform; the correction is inside on every row. Source: `liquidity.scoring.scored_table()`, `liquidity.config.TOL_RECOVERY`.*
+
 The preregistration fixed an expected *sign* per category before any analysis. Two of the five signs match; three do not, but those three are below the `MIN_NAIVE_BIAS = 0.04` materiality threshold that `tests/test_naive_must_fail.py` asserts on, so the suite does not flag them.
 
 | Category | Preregistered sign of `proxy − true` | Observed sign | \|error\| | Above 0.04 threshold? | Class |
@@ -173,12 +181,20 @@ H1a is falsified in the opposite direction from the hypothesis: the platform err
 
 The recovery is real and it is conditional. Running the estimator with the separator removed — the
 `has_replied_contact` + last-reply-gap form the preregistration specified — misses on all five
-categories (worst +0.121). Sweeping the cutoff gives a working band of roughly 4–6 days: 4.0 → worst
-0.0103, 4.5 → 0.0161, 6.0 → 0.0208, while 2.0 → 0.1582 and 10.0 → 0.0359. The generator's own sale
+categories (worst +0.121). Sweeping the cutoff (Figure 3) puts the recovery band at 4–8 days by the failure count: 4.0 →
+worst 0.0103, 4.5 → 0.0161, 6.0 → 0.0208 and 8.0 → 0.0272 with no category outside the ±0.03
+tolerance, while 2.0 → 0.1582 and 10.0 → 0.0359 fail on three or more. The band is wider than the
+4–6 days this section used to claim, and wider than what `tests/test_separator_sensitivity.py`
+asserts (4.0 and 6.0); the sweep is the source for both numbers, and the figure shades the band
+it derives rather than the band the text would like. The generator's own sale
 rule sits at 4.5 days (`liquidity/generate.py:290`). So this section measures that a two-component
 mixture recovers the truth when the separator matches the data-generating process; it does not
 measure that an analyst would discover that separator from the data. `tests/test_separator_sensitivity.py`
 asserts both the recovery band and its collapse outside it, so the claim cannot drift.
+
+![Absolute error by reply-to-removal cutoff, with the derived recovery band shaded](figures/03_separator_sensitivity.png)
+
+*Figure 3 — each point refits the EM mixture with `SOLD_LAG_MAX` overridden and restored afterwards. The shaded band is derived from the failure count, not declared: every cutoff in it keeps all five categories inside the tolerance. Source: `liquidity.scoring.separator_sweep()`.*
 
 The estimator is a two-component sold/unsold mixture fitted by EM on observable signals only (`replied_short`, `log1p(lag from first reply to removal)`, `log1p(contact count)`); the seller's mark seeds the components but does not enter the likelihood (`liquidity/bias.py:266-292`). Tolerance is `TOL_RECOVERY = 0.03` (`liquidity/config.py:38`).
 
@@ -235,6 +251,10 @@ H2a was preregistered as expected to fail: the naive number is positive, but it 
 
 The point estimate is negative (−2.5% relative), the holdout arm is only ~10% of sessions, the interval includes zero, and the test is not significant. The MDE is the load-bearing number: at 80% power this design detects a 6.8% relative change, and the observed effect is 2.5%, so a null readout was the expected outcome regardless of the true sign. The correct statement is directional: paid visibility shows no proven gain in contacts per session and a negative point estimate consistent with displacement. It is not evidence that paid visibility destroys contacts, and the absence of significance here is not evidence of no effect. The sample-ratio check (`liquidity/monetization.py::sample_ratio_check`) is reported because a silent drift in the holdout share would widen every interval without failing anything.
 
+![The incrementality estimate against the minimum detectable effect](figures/04_incrementality_vs_mde.png)
+
+*Figure 4 — the causal contrast with its 95% bootstrap interval, the zero line, and the ±MDE band the design can actually resolve. The point estimate is 36% of the MDE, which is why "negative but not significant" describes the sample, not the product. Source: `liquidity.monetization.holdout_incrementality`.*
+
 ## H2c — guardrails
 
 The guardrail section was rewritten: it used to print a paid-vs-unpaid cross-section under a
@@ -267,6 +287,14 @@ Three things follow, and two of them cut against the original wording.
 3. **The displacement lands at the top of the SERP.** Organic impressions per session in positions
    1–3 fall 21.6%, while positions 4–6, 7–10 and 11–20 move by −1.7%, −2.3% and −1.6%. A product
    decision about capping promoted slots is about the top of the page, not the average.
+
+![Waterfall of the organic-contacts drop into slot arithmetic and conversion](figures/05_boost_waterfall.png)
+
+*Figure 5 — the −10.9% guardrail decomposed. Relative changes add, so the two bars are the arithmetic and behavioural halves of one number: 42% of the drop is a promoted slot occupying an organic one, 58% is lower conversion per organic impression. Source: `liquidity.monetization.guardrails()['displacement']`.*
+
+![Organic impressions per session by SERP position bucket](figures/06_position_mix.png)
+
+*Figure 6 — the same displacement by position. The top of the SERP loses 21.6% of its organic impressions while positions 4–20 barely move, which is what makes a per-SERP slot cap the lever rather than a global rollback. Source: `liquidity.monetization.guardrails()['displacement']['by_position']`.*
 
 The dirty threshold is a 1% relative fall (`liquidity/monetization.py`, `GUARDRAIL_TOLERANCE = 0.01`)
 and it is applied to organic contacts per session, as preregistered. That guardrail is still dirty

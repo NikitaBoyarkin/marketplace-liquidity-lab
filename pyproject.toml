@@ -9,6 +9,7 @@ dependencies = [
     "pyarrow>=15",
     "duckdb>=1.0",
     "scipy>=1.11",
+    "matplotlib>=3.11.2",
 ]
 
 [dependency-groups]

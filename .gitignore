@@ -10,5 +10,5 @@ data/staging/
 data/marts/
 *.duckdb
 
-# figures are regenerated; no dashboard exists — the report is the deliverable
-reports/figures/
+# figures ARE committed: a PNG plus the numbers it drew (figure_data.json). The
+# sidecar is what CI diffs — raster bytes differ between platforms, values do not.

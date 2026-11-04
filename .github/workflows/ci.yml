@@ -49,6 +49,14 @@ jobs:
           uv run python -m liquidity.metrics         | tail -3
           uv run python -m liquidity.quality         | tail -1
 
+      # The figures are committed artefacts: a PNG plus the numbers it drew. PNG bytes
+      # are rasteriser-dependent, so only the payload sidecar is diffed — that is what
+      # makes a stale figure fail here instead of ageing quietly in the repository.
+      - name: Figures match their committed payload
+        run: |
+          make figures
+          git diff --exit-code reports/figures/figure_data.json
+
       - name: Quality gates pass on the frozen log
         run: uv run python -m liquidity.quality | grep -q "all checks passed"
 

@@ -14,7 +14,7 @@ RAW_TABLES := categories regions sellers listings searches impressions views con
 RAW_FILES := $(addprefix $(RAW_DIR)/,$(addsuffix .parquet,$(RAW_TABLES)))
 GENERATOR_SOURCES := liquidity/generate.py liquidity/config.py
 
-.PHONY: all data test lint clean
+.PHONY: all data test lint figures clean
 
 all: data test lint
 
@@ -39,6 +39,12 @@ test:
 
 lint:
 	$(UV) run ruff check .
+
+# Renders every figure into reports/figures/ and rewrites figure_data.json, the
+# payload each PNG drew. Commit both: the PNG is the artefact, the sidecar is what
+# `tests/test_figures.py` compares a fresh build against.
+figures: data
+	$(UV) run python -m liquidity.scoring --figures
 
 clean:
 	rm -rf $(RAW_DIR) data/staging data/marts .pytest_cache .ruff_cache
