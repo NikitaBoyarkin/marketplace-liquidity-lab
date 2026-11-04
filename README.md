@@ -5,84 +5,117 @@
                  |                |           /
 
 ╭─────────────────────────────────────────────────────────────────────────╮
-│ A synthetic classifieds marketplace with a planted answer key. Every... │
+│ Синтетический классифайд с посаженной истиной: каждое число ниже        │
+│ выводится командой из репозитория или берётся из ключа ответов.         │
 ╰─────────────────────────────────────────────────────────────────────────╯
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 # marketplace-liquidity-lab
 
-> **The platform never sees the sale.** Its liquidity metric is a seller's self-report
-> (`removal_reason == "sold"`), and this repo measures how far that self-report is from the
-> latent truth — per category. A **second, independent leg** asks whether paid visibility creates
-> contact demand or relocates it. The two legs answer different questions and share only the log:
-> the visibility contrast does not consume the sell-through correction.
+> **Платформа не видит сделку.** Её метрика ликвидности — самоотчёт продавца
+> (`removal_reason == "sold"`), и репозиторий измеряет, насколько этот самоотчёт
+> расходится со скрытой истиной — по категориям. **Вторая, независимая нога**
+> отвечает на другой вопрос: платная видимость создаёт контактный спрос или
+> перераспределяет его. Общий у них только лог: контраст по видимости не
+> использует поправку sell-through.
 
-A synthetic classifieds marketplace with a planted answer key. Every number below comes from a
-command in this repo or from the planted key, and the suite scores the estimators against the key.
+Синтетический классифайд с посаженной истиной. Каждое число ниже выводится
+командой из этого репозитория или берётся из ключа, а тесты сверяют оценки
+с ключом.
 
-**Role:** product analyst. **The decision this case supports:** roll back paid visibility in its
-current form, and publish sell-through per category with a correction — never as one platform
-number. **The hard part** was not computing either number but showing where each one is wrong: the
-metric the platform ships under-reports sales by 6.6 pp, and the paid-visibility readout that looked
-like a +113% win is selection.
+**Роль:** продуктовый аналитик. **Какое решение поддерживает кейс:** откатить
+платную видимость в текущем виде и публиковать sell-through по категориям
+с поправкой — никогда одним платформенным числом. **Сложное место** — не
+посчитать оба числа, а показать, где каждое из них врёт: метрика, которую
+платформа отдаёт наружу, занижает продажи на 6.6 п.п., а отчёт по платной
+видимости, выглядевший как победа +113%, — это отбор.
 
-**Public link:** живого демо нет · [кейс](https://nikitaboyarkin.github.io/projects/marketplace-liquidity/) · [исходники](https://github.com/NikitaBoyarkin/marketplace-liquidity-lab)
+**Ссылки:** живого демо нет · [кейс](https://nikitaboyarkin.github.io/projects/marketplace-liquidity/) · [исходники](https://github.com/NikitaBoyarkin/marketplace-liquidity-lab)
 
-## Situation
+## Содержание
 
-A two-sided classifieds marketplace (Avito-like) where the transaction closes off-platform. The
-platform logs searches, impressions, views, contacts and removals; it never logs `true_sale`. Its
-sell-through metric — the share of a publish cohort whose removal reason is `sold` — is
-seller-reported and wrong in both directions: sellers mark "sold" on listings that merely lapsed,
-and let genuine sales lapse unmarked.
+- [Ситуация](#ситуация)
+- [Задача](#задача)
+- [Что сделано](#что-сделано)
+- [Результат](#результат)
+  - [1. Платформенное число занижено на 6.6 п.п.](#1-платформенное-число-занижено-на-66-пп)
+  - [2. Платная видимость: наивный расчёт против holdout](#2-платная-видимость-наивный-расчёт-против-holdout)
+  - [3. Грязный гардрейл и арифметика слотов](#3-грязный-гардрейл-и-арифметика-слотов)
+  - [4. Два инварианта, которые раньше были декорацией](#4-два-инварианта-которые-раньше-были-декорацией)
+- [Инсайты и рекомендации](#инсайты-и-рекомендации)
+  - [Инсайты](#инсайты)
+  - [Рекомендации](#рекомендации)
+  - [Следующий шаг](#следующий-шаг)
+  - [Что изменит решение](#что-изменит-решение)
+  - [Чего здесь нет](#чего-здесь-нет)
+- [Что доказывает репозиторий](#что-доказывает-репозиторий)
+- [Быстрый старт](#быстрый-старт)
+- [Структура](#структура)
+- [Чем отличается от `serp-rank-lab`](#чем-отличается-от-serp-rank-lab)
+- [Чем это не является](#чем-это-не-является)
 
-The log holds 6,000 listings and 40,000 search sessions over 90 days, in six regions and five
-categories. The analysis cohort is the 1,956 listings published in the first 30 days, each with a
-full 30-day observation window. The schema is in `docs/data_dictionary.md`.
+## Ситуация
 
-**Data.** Synthetic, with a planted answer key: `liquidity/generate.py` (seed 42)
-writes `data/raw/*.parquet`; the latent truth lives in `_truth/ground_truth.json`
-and is read by tests only (`tests/test_no_truth_leak.py`). `data/raw/` is
-gitignored — rebuild with `uv run python -m liquidity.generate`. Not Avito data.
+Двусторонний классифайд в духе Авито, где сделка закрывается вне платформы.
+Платформа логирует поиски, показы, просмотры, контакты и снятия, а `true_sale`
+не логирует никогда. Её метрика sell-through — доля когорты публикации, у
+которой причина снятия `sold`, — держится на самоотчёте и врёт в обе стороны:
+продавцы помечают «продано» на объявлениях, которые просто истекли, а реальные
+продажи оставляют без отметки.
 
-## Task
+В логе 6 000 объявлений и 40 000 поисковых сессий за 90 дней, шесть регионов
+и пять категорий. Аналитическая когорта — 1 956 объявлений, опубликованных
+в первые 30 дней, у каждого полное 30-дневное окно наблюдения. Схема —
+в `docs/data_dictionary.md`.
 
-Two questions, fixed in `docs/preregistration.md` before any analysis ran:
+**Данные.** Синтетика с посаженным ключом: `liquidity/generate.py` (seed 42)
+пишет `data/raw/*.parquet`, скрытая истина лежит в `_truth/ground_truth.json`,
+читают её только тесты (`tests/test_no_truth_leak.py`). Папка `data/raw/`
+в gitignore — пересобирается командой `uv run python -m liquidity.generate`.
+Это не данные Авито.
 
-1. **Q1 — can liquidity be measured from what the platform sees?** Audit the visible proxy against
-   the latent truth, then build a correction that uses observable signals only.
-2. **Q2 — does paid visibility create contact demand, or relocate it?** Contrast the naive
-   pre/post read with a randomised holdout, and report guardrails that a primary-only readout
-   would hide.
+## Задача
 
-## Actions
+Два вопроса, зафиксированные в `docs/preregistration.md` до запуска анализа:
 
-- Generated a deterministic event log (`seed 42`) with latent sale state. The answer key is written
-  outside `data/`, and analysis modules are statically forbidden to read it (AST scan in
-  `tests/test_no_truth_leak.py`).
-- Built cohort metrics from observable tables only: cohort fixed by publish time, contact defined
-  as a distinct `(buyer, listing)` pair, and every platform rollup returned next to its category
-  split (`liquidity/metrics.py`). The SQL layer is cross-checked against pandas to 1e-9
+1. **Q1 — можно ли измерить ликвидность по тому, что видит платформа?** Сверить
+   видимый прокси со скрытой истиной и построить поправку на наблюдаемых
+   сигналах.
+2. **Q2 — платная видимость создаёт контактный спрос или перераспределяет его?**
+   Сопоставить наивный расчёт до/после с рандомизированным holdout и показать
+   гардрейлы, которые отчёт по одному основному показателю скрыл бы.
+
+## Что сделано
+
+- Сгенерирован детерминированный лог событий (`seed 42`) со скрытым состоянием
+  продажи. Ключ пишется вне `data/`, а модулям анализа статически запрещено его
+  читать — AST-скан в `tests/test_no_truth_leak.py`.
+- Метрики когорты считаются только по наблюдаемым таблицам: когорта
+  фиксируется временем публикации, контакт определён как уникальная пара
+  `(buyer, listing)`, и каждый платформенный итог идёт рядом с разбивкой
+  по категориям (`liquidity/metrics.py`). SQL-слой сверен с pandas до 1e-9
   (`tests/test_metrics.py::test_sql_matches_pandas_on_cohort_contact_share`).
-- Estimated latent sell-through with a two-component sold/unsold mixture fitted by EM on
-  observable signals — a short reply-to-removal separator, the reply lag, and the contact count
-  (`liquidity/bias.py`).
-- Ran the monetisation leg twice: naive pre/post on boosted listings, and contacts per session in
-  treated sessions versus a 10% randomised holdout, plus unpaid-contact and reply-rate guardrails
-  (`liquidity/monetization.py`).
-- Parsed the decision rule out of the preregistration document at runtime, so the recommendation
-  cannot drift from what was declared (`read_decision_rules`).
+- Скрытый sell-through оценён двухкомпонентной смесью «продано / не продано»,
+  подобранной EM по наблюдаемым сигналам: короткий сепаратор от ответа до
+  снятия, задержка ответа и число контактов (`liquidity/bias.py`).
+- Нога монетизации прогнана дважды: наивный расчёт до/после по бустнутым
+  объявлениям и контакты на сессию в обработанных сессиях против 10%-го
+  рандомизированного holdout, плюс гардрейлы по неоплаченным контактам
+  и по доле ответов (`liquidity/monetization.py`).
+- Правило решения парсится из документа пререгистрации во время исполнения,
+  поэтому рекомендация не может разойтись с тем, что объявили заранее
+  (`read_decision_rules`).
 
-## Result
+## Результат
 
-### 1. The platform's own number is 6.6 pp low, and the aggregate is worse than its categories (H1a falsified)
+### 1. Платформенное число занижено на 6.6 п.п.
 
-From `uv run python -m liquidity.scoring`; the `true` columns are the planted truth, read by that
-scorer and by the tests — never by the analysis modules:
+Из `uv run python -m liquidity.scoring`; столбцы `true` — посаженная истина,
+её читают этот скорер и тесты, модули анализа — никогда:
 
 | Category | True | Naive | Naive error | Corrected | Corrected error |
-|---|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|
 | goods | 0.4241 | 0.4219 | −0.0021 | 0.4262 | +0.0021 |
 | services | 0.2735 | 0.1609 | −0.1126 | 0.2895 | +0.0161 |
 | realty | 0.1310 | 0.1310 | 0.0000 | 0.1414 | +0.0103 |
@@ -90,240 +123,426 @@ scorer and by the tests — never by the analysis modules:
 | jobs | 0.3385 | 0.3077 | −0.0308 | 0.3538 | +0.0154 |
 | **platform** | **0.3070** | **0.2413** | **−0.0657** | **0.3185** | **+0.0115** |
 
-Errors are computed from unrounded estimates, so hand-subtracting the displayed columns can differ
-in the fourth decimal.
+Ошибки считаются по неокруглённым оценкам, поэтому при ручном вычитании
+отображаемых столбцов четвёртый знак может разойтись.
 
-![Naive versus corrected sell-through per category, with the latent truth marked](reports/figures/01_sell_through_audit.png)
+![Наивный и скорректированный sell-through по категориям, скрытая истина отмечена](reports/figures/01_sell_through_audit.png)
 
-**H1a is FALSIFIED.** The preregistration predicted the platform-level aggregate would be closer to
-truth than the average category (specifically `|platform error| < mean(|category error|) / 2`). It
-is the opposite: the platform error is 0.0657 while the mean absolute category error is 0.0544 —
-the platform-level aggregate is further from truth than the average category, not closer.
+**Вывод по графику.** Прокси (светлый кружок) систематически ниже истины
+(коралловая отметка) на `auto` и `services`: там его собственный 95%-й интервал
+истину не накрывает, то есть промах не объяснить шумом выборки. Поправка
+(тёмный кружок) подтягивает обе категории к истине, но перелетает её на
++1.6 п.п. по обеим — знак ошибки меняется, величина падает с 12.7 до 1.6 п.п.
+Платформенная строка вынесена отдельно, потому что именно её платформа отдаёт
+наружу: 24.1% против 30.7%, и её интервал тоже не достаёт до истины.
 
-**H1b holds — under a separator that the generator also uses, so read it as a specification check,
-not as independent validation.** The correction lands within ±0.03 on all five categories, worst
-0.0161 (`tests/test_bias_recovery.py`). The sensitivity run is what qualifies that result: drop the
-short reply-to-removal separator — the feature the preregistration actually specified — and the
-correction misses on all five categories (worst +0.121); push the cutoff to 2 days and it misses
-again; a cutoff sweep puts its recovery band at roughly 4–8 days, which is where the generator places
-its own sale rule (`SOLD_REPLY_LAG_MAX = 4.5`, `liquidity/generate.py:290`) — Figure 3 in
-`reports/report.md` derives that band from the failure count instead of declaring it. So the estimator
-demonstrates that a mixture recovers truth *when the separator is correctly specified* — it does not
-show that an analyst without the DGP would have found that separator.
-`tests/test_separator_sensitivity.py` binds both halves of this claim.
+![Знаковая ошибка обеих оценок против коридора ±3 п.п.](reports/figures/02_error_vs_tolerance.png)
 
-**The `realty` zero is a near-cancellation that this sample resolved exactly.** Its naive estimate
-equals the latent truth to six decimals (0.131034 = 38 marked-sold listings out of a 290-listing
-cohort). Under the planted parameters the two error directions almost cancel: expected marked share
-is `0.70 × 0.14 + 0.10 × 0.86 × 0.45 = 0.1367` against a true 0.14 — about one listing apart in this
-cohort (`liquidity/generate.py:43-44`, removal gating at `:63`). The realised count landed on 38
-versus 38. A zero error that is one listing wide is not evidence the proxy is sound: the
-platform-level error is −6.6 pp regardless.
+**Вывод по графику.** Штриховка — наивный прокси, заливка — поправка. Прокси
+выходит за коридор ±3 п.п. с запасом на трёх строках: `auto` −12.7, `services`
+−11.3, платформа −6.6; `jobs` (−3.1) стоит на самой границе. Поправка внутри
+коридора везде, худшее значение +1.6. Единственный ноль в штриховке (`realty`)
+— совпадение счёта, а не свойство метрики; об этом ниже.
 
-### 2. Paid visibility: the naive read says +113%, the randomised holdout says −2.5% and cannot prove it
+**H1a опровергнута.** Пререгистрация предсказывала, что платформенный агрегат
+окажется ближе к истине, чем средняя категория, — формально
+`|ошибка платформы| < средняя(|ошибка категории|) / 2`. Вышло наоборот:
+ошибка платформы 0.0657, а средняя абсолютная ошибка категории 0.0544.
+Агрегат дальше от истины, чем средняя категория: ошибки не гасят друг друга,
+а складываются.
 
-Naive pre/post on the 738 boosted listings: contacts per listing rise from 0.4702 before the
-purchase to 1.0027 after — a lift ratio of 2.13. This is selection: boosts are bought
-disproportionately by weak organic listings
+**H1b держится — но под сепаратором, который использует и генератор, так что
+читайте это как проверку спецификации, а не как независимую валидацию.**
+Поправка попадает в ±0.03 на всех пяти категориях, худшее 0.0161
+(`tests/test_bias_recovery.py`). Квалифицирует результат прогон
+чувствительности: уберите короткий сепаратор «ответ → снятие» — тот самый
+признак, который пререгистрация и указывала, — и поправка промахивается на всех
+пяти категориях (худшее +0.121); сдвиньте отсечку до 2 дней — снова промах;
+развёртка по отсечке даёт полосу восстановления примерно 4–8 дней, то есть
+ровно там, где генератор и помещает своё правило продажи
+(`SOLD_REPLY_LAG_MAX = 4.5`, `liquidity/generate.py:290`). То есть оценщик
+показывает, что смесь восстанавливает истину, *когда сепаратор задан верно*,
+и не показывает, что аналитик без доступа к DGP этот сепаратор нашёл бы.
+Обе половины утверждения связаны тестом
+`tests/test_separator_sensitivity.py`.
+
+![Абсолютная ошибка по отсечке «ответ → снятие», полоса восстановления закрашена](reports/figures/03_separator_sensitivity.png)
+
+**Вывод по графику.** Каждая точка — переподгонка EM-смеси с переопределённым
+и затем восстановленным `SOLD_LAG_MAX`. До 3.5 дней худшая из пяти категорий
+промахивается на 7–24 п.п.; в полосе 4–8 дней все пять внутри допуска; после
+8 дней ошибка снова растёт. Полоса выведена из счётчика промахов, а не
+объявлена заранее, и пунктир на 4.5 дня — правило продажи самого генератора.
+Совпадение полосы с этим пунктиром и есть причина читать результат как
+проверку спецификации.
+
+**Ноль в `realty` — почти-сокращение, которое эта выборка разрешила точно.**
+Наивная оценка совпала со скрытой истиной до шести знаков (0.131034 = 38
+отмеченных «продано» объявлений из когорты в 290). При посаженных параметрах
+два направления ошибки почти гасят друг друга: ожидаемая доля отмеченных
+`0.70 × 0.14 + 0.10 × 0.86 × 0.45 = 0.1367` против истинных 0.14 — разница
+примерно в одно объявление (`liquidity/generate.py:43-44`, гейт снятия
+на `:63`). Реализованный счёт попал 38 против 38. Нулевая ошибка шириной
+в одно объявление ничего не говорит о годности прокси: платформенная ошибка
+всё равно −6.6 п.п.
+
+### 2. Платная видимость: наивный расчёт против holdout
+
+Наивный расчёт до/после по 738 бустнутым объявлениям: контактов на объявление
+0.4702 до покупки и 1.0027 после — отношение 2.13, то есть +113%. Это отбор:
+бусты покупают непропорционально часто слабые органические объявления
 (`tests/test_monetization.py::test_naive_prepost_is_positive_because_of_selection`).
 
-The causal contrast, contacts per search session, treated versus randomised holdout
-(`uv run python -m liquidity.monetization`):
+Причинный контраст — контакты на поисковую сессию, обработанные против
+рандомизированного holdout (`uv run python -m liquidity.monetization`):
 
-| Metric | Value |
+| Показатель | Значение |
 |---|---:|
-| Contacts/session, treated | 0.4581 |
-| Contacts/session, holdout | 0.4697 |
-| Incrementality | −0.0116 (−2.47%) |
+| Контактов на сессию, treated | 0.4581 |
+| Контактов на сессию, holdout | 0.4697 |
+| Инкрементальность | −0.0116 (−2.47%) |
 | Welch t | −1.02 |
 | Welch p | 0.308 |
-| 95% bootstrap CI | (−0.0346, +0.0084) |
-| Standard error | 0.0114 |
-| **MDE at 80% power** | **0.0319 (6.8% of the holdout rate)** |
-| Sample ratio: observed / planned holdout | 10.02% / 10% (χ² = 0.023, p = 0.88) |
+| 95%-й bootstrap-интервал | (−0.0346, +0.0084) |
+| Стандартная ошибка | 0.0114 |
+| **MDE при мощности 80%** | **0.0319 (6.8% от ставки holdout)** |
+| Доля holdout: факт / план | 10.02% / 10% (χ² = 0.023, p = 0.88) |
 
-The incrementality is negative, but the Welch p-value is 0.308 and the interval includes zero. The
-MDE is the sentence that matters: **the observed 2.47% effect is less than half of what this design
-can detect (6.8%)**, so "negative but not significant" is a property of the sample size, not a
-finding about the product. The honest read is "no proven gain in contacts per session, with a
-negative point estimate consistent with displacement" — not "paid visibility destroys contacts", and
-not "no effect". The sample-ratio check is reported for the same reason: a silent drift in the 10%
-holdout would widen every interval above without failing anything (`sample_ratio_check`).
+Инкрементальность отрицательная, но p = 0.308 и интервал включает ноль.
+Главное здесь — MDE: **наблюдённый эффект 2.47% меньше половины того, что этот
+дизайн вообще способен различить (6.8%)**, поэтому «отрицательно, но
+незначимо» — свойство размера выборки, а не находка о продукте. Честная
+формулировка: «доказанного прироста контактов на сессию нет, точечная оценка
+отрицательна и согласуется с вытеснением» — не «платная видимость уничтожает
+контакты» и не «эффекта нет». Проверка соотношения сторон приведена по той же
+причине: тихий сдвиг в 10%-м holdout расширил бы все интервалы выше, ничего
+не уронив (`sample_ratio_check`).
 
-![The incrementality estimate against the minimum detectable effect](reports/figures/04_incrementality_vs_mde.png)
+![Оценка инкрементальности против минимального различимого эффекта](reports/figures/04_incrementality_vs_mde.png)
 
-### 3. The guardrail is dirty — and 42% of the drop is a slot count
+**Вывод по графику.** Точка −0.0116, интервал пересекает ноль, а серая полоса
+±MDE (0.0319) заметно шире самого интервала. Эффект составляет 36% от MDE — то
+есть даже идеально положительный результат такого размера эта выборка не
+отличила бы от нуля. Отсюда единственный корректный вывод: знак не установлен,
+величина не ограничена тесно, и решать по этому прогону нельзя.
 
-Two contrasts, kept apart because they support different claims. Only the holdout ones can carry a
-causal reading; the paid-vs-unpaid one compares different listings and is labelled as such.
+### 3. Грязный гардрейл и арифметика слотов
 
-| Contrast (treated vs randomised holdout) | Treated | Holdout | Change | 95% CI |
+Два контраста, разделённые по тому, что каждый из них выдерживает. Причинное
+чтение даёт только контраст с holdout; сравнение «платные против неоплаченных»
+сравнивает разные объявления и помечено как описательное.
+
+| Контраст (treated против рандомизированного holdout) | Treated | Holdout | Изменение | 95% CI |
 |---|---:|---:|---:|---|
-| Organic contacts per session | 0.4184 | 0.4697 | −10.9% | (−7.3%, −2.8%) |
-| Organic impressions per session | 11.496 | 12.071 | −4.8% | (−0.685, −0.464) |
-| Contacts per organic impression | 0.03639 | 0.03891 | −6.5% | (−0.0042, −0.0006) |
-| Reply rate on **organic** contacts | 0.6431 | 0.6480 | −0.5 pp | (−2.7, +1.9) pp |
+| Органических контактов на сессию | 0.4184 | 0.4697 | −10.9% | (−7.3%, −2.8%) |
+| Органических показов на сессию | 11.496 | 12.071 | −4.8% | (−0.685, −0.464) |
+| Контактов на органический показ | 0.03639 | 0.03891 | −6.5% | (−0.0042, −0.0006) |
+| Доля ответов на **органические** контакты | 0.6431 | 0.6480 | −0.5 п.п. | (−2.7, +1.9) п.п. |
 
-| Descriptive, different listings | Paid | Unpaid | Change |
+| Описательно, разные объявления | Платные | Неоплаченные | Изменение |
 |---|---:|---:|---:|
-| Seller reply rate | 0.5662 | 0.6436 | −7.7 pp |
+| Доля ответов продавца | 0.5662 | 0.6436 | −7.7 п.п. |
 
-**The reply-rate guardrail does not survive as causal evidence.** On the same organic listings,
-suppressing promoted slots moves the reply rate by −0.5 pp with zero inside the interval. The −7.7 pp
-that a paid-vs-unpaid readout reports is listing selection: a boosted listing is a weak listing by
-construction, and weak listings get worse replies.
+**Гардрейл по доле ответов не выдерживает причинного чтения.** На одних и тех
+же органических объявлениях подавление промо-слотов двигает долю ответов
+на −0.5 п.п., ноль внутри интервала. Те −7.7 п.п., которые показывает
+сравнение «платные против неоплаченных», — отбор объявлений: бустнутое
+объявление по построению слабое, а слабое объявление получает худшие ответы.
 
-**The displacement is real, but a promoted slot also displaces a slot.** Organic contacts per session
-fall 10.9%, which decomposes into 4.8% fewer organic impressions per session (a promoted slot
-occupies one) and 6.5% lower conversion per organic impression. Slot arithmetic accounts for ~42% of
-the drop; the remaining ~58% is a conversion effect and is the part a product decision should be
-about. The position mix shows where it lands — organic impressions in positions 1–3 fall **21.6%**
-per session while positions 4–20 move by 1.5–2.3%, so the top of the SERP is what the promoted slots
-eat (`liquidity/monetization.py::guardrails`).
+**Вытеснение настоящее, но промо-слот вытесняет ещё и слот.** Органические
+контакты на сессию падают на 10.9%, и это раскладывается на 4.8% меньше
+органических показов на сессию (промо-слот занимает одно место) и 6.5% ниже
+конверсия на органический показ. Арифметика слотов объясняет ~42% падения;
+остальные ~58% — эффект конверсии, и продуктовое решение должно быть именно
+про эту часть. Разрез по позициям показывает, где это оседает: органические
+показы в позициях 1–3 падают на **21.6%** на сессию, а позиции 4–20 двигаются
+на 1.6–2.3%, то есть промо-слоты съедают верх выдачи
+(`liquidity/monetization.py::guardrails`).
 
-![Waterfall of the organic-contacts drop into slot arithmetic and conversion](reports/figures/05_boost_waterfall.png)
+![Водопад падения органических контактов: арифметика слотов и конверсия](reports/figures/05_boost_waterfall.png)
 
-Under the preregistered rule — parsed from `docs/preregistration.md`, not restated in code — the
-decision keys on organic contacts falling, and they do fall, so the rule still binds: **roll back,
-whatever H2b says**; and because H2b is negative, **price paid visibility as a tax on organic reach
-and cap slots per SERP** (`liquidity/monetization.py::decision`,
-`tests/test_monetization.py::test_decision_rolls_back_on_a_dirty_guardrail`). What changed is the
-evidence behind the verdict, not the verdict: the cap argument now rests on the conversion slope and
-the top-of-SERP mix, not on the reply-rate delta.
+**Вывод по графику.** Два столбца складываются в третий: −4.8% (меньше
+органических мест) и −6.5% (хуже конверсия на показ) дают −10.9% органических
+контактов. Первая половина гарантирована конструкцией — промо-слот физически
+занимает место органики, — поэтому продуктовый спор идёт только о второй.
 
-The recommendation, its rollback thresholds and what is deliberately not measured are collected in
-`docs/decision-memo.md` — including the fact that **no slot limit is measured here**: the experiment
-compares "all promoted slots suppressed" with "shown", never 1, 2 or 3 slots.
+![Органические показы на сессию по корзинам позиций](reports/figures/06_position_mix.png)
 
-The suite pins the estimators rather than every cell of the tables: the corrected errors against
-their tolerance, the treated/holdout rates, the guardrail shares and the separator sensitivity above.
-Table values not asserted by a test are reproducible from the commands in Quick start —
-`uv run pytest` → 126 passed.
+**Вывод по графику.** Единственная корзина, которую промо-слоты задевают
+всерьёз, — топ-3: 21.6% против 1.6–2.3% в остальных корзинах. Средняя по выдаче
+размазывает этот провал почти до нуля, поэтому решение про лимит слотов — это
+решение про верх страницы, а не про всю выдачу.
 
-### 4. Two invariants that used to be decoration
+По правилу из пререгистрации — оно парсится из `docs/preregistration.md`,
+а не переписано в коде — решение завязано на падение органических контактов,
+и оно есть, поэтому правило срабатывает: **откатывать, что бы ни говорила
+H2b**; а поскольку H2b отрицательна, **тарифицировать платную видимость как
+налог на органический охват и ограничить число промо-слотов на выдачу**
+(`liquidity/monetization.py::decision`,
+`tests/test_monetization.py::test_decision_rolls_back_on_a_dirty_guardrail`).
+Изменилось не решение, а доказательство под ним: аргумент про лимит теперь
+опирается на наклон конверсии и состав топа выдачи, а не на разницу в доле
+ответов.
 
-Both are mechanisms now, and both are worth reading before trusting the numbers above.
+Рекомендация, пороги отката и то, что сознательно не измерено, собраны
+в `docs/decision-memo.md` — включая тот факт, что **лимит слотов здесь
+не измерялся**: эксперимент сравнивает «все промо-слоты погашены» с
+«показаны», но не 1, 2 или 3 слота.
 
-- **Every quality gate can fail.** `liquidity/quality.py` runs eight raw-layer gates, and
-  `tests/test_quality_gates.py` injects one targeted defect per gate and requires it to go red. The
-  two gates this replaced could not fail: one asserted `distinct_pairs <= rows`, true for any frame,
-  and one compared two config constants with each other. A gate that has never failed is
-  indistinguishable from a gate that cannot fail.
-- **One source of truth for every window and threshold.** `metrics` used to keep its own
-  `COHORT_WINDOW_DAYS = 30.0` next to `config.COHORT_DAYS = 30`, and `monetization` ran 1 000
-  bootstrap draws at seed 7 while config said 2 000 at seed 42. Nothing crashed; the two halves of
-  the report simply stopped describing the same dataset. `tests/test_config_single_source.py` fails
-  if a module redefines a config constant with a literal, or if a config key is named only once —
-  which is how the dead `SHORT_WINDOW_DAYS` was caught before it was wired into the W=7 readout.
+Тесты фиксируют оценщики, а не каждую клетку таблиц: скорректированные ошибки
+против их допуска, ставки treated/holdout, доли гардрейлов и чувствительность
+к сепаратору выше. Значения таблиц, не закреплённые тестом, воспроизводятся
+командами из быстрого старта: `uv run pytest` → 126 passed.
 
-## What this proves
+### 4. Два инварианта, которые раньше были декорацией
 
-- **The preregistration is executed, not cited.** The decision rule is parsed out of
-  `docs/preregistration.md` at runtime, and the suite fails if the code and the document diverge —
-  `liquidity/monetization.py::decision`, `tests/test_monetization.py`
+Оба теперь механизмы, и оба стоит прочитать до того, как доверять числам выше.
+
+- **Любой контроль качества умеет падать.** `liquidity/quality.py` прогоняет
+  восемь гейтов на сыром слое, а `tests/test_quality_gates.py` подкладывает
+  в каждый гейт по одному целевому дефекту и требует, чтобы гейт покраснел.
+  Два гейта, которые они заменили, упасть не могли: один проверял
+  `distinct_pairs <= rows` — верно для любого фрейма, — второй сравнивал две
+  константы конфига между собой. Гейт, который никогда не падал, неотличим
+  от гейта, который падать не умеет.
+- **Один источник истины для каждого окна и порога.** У `metrics` раньше жила
+  своя `COHORT_WINDOW_DAYS = 30.0` рядом с `config.COHORT_DAYS = 30`,
+  а `monetization` крутил 1 000 bootstrap-итераций с сидом 7, тогда как конфиг
+  говорил про 2 000 с сидом 42. Ничего не падало — просто две половины отчёта
+  переставали описывать один и тот же набор данных.
+  `tests/test_config_single_source.py` падает, если модуль переопределяет
+  константу конфига литералом или если ключ конфига назван только один раз —
+  так и поймали мёртвую `SHORT_WINDOW_DAYS` до того, как её подключили
+  к показателю W=7.
+
+## Инсайты и рекомендации
+
+### Инсайты
+
+1. **Самоотчёт продавца — это гипотеза, а не метрика.** Занижение −6.6 п.п.
+   на платформе, до −12.7 п.п. в худшей категории (`auto`). Проверить его
+   нечем, кроме внешней истины, и именно поэтому аудит здесь стоит отдельного
+   репозитория, а не сноски к дашборду.
+2. **Агрегат не усредняет ошибки, а складывает их.** Категории ошибаются
+   в одну сторону, поэтому `auto` и `services` тянут платформенное число вниз,
+   а `goods` и `realty` не дают ничего взамен: |−0.0657| > 0.0544. Единое число
+   на дашборде не «сходится в среднем» — оно наследует худшие категории.
+3. **Знак ошибки нельзя проверять на одной категории.** Ноль в `realty` —
+   совпадение 38 отмеченных из 290 с ожиданием, а не признак годного прокси.
+   Оценка качества метрики на одной категории даёт ложно успокаивающий ответ
+   с вероятностью, которую вы не измерили.
+4. **Вытеснение в выдаче на 42% состоит из арифметики мест.** Промо-слот
+   занимает место органики — это не спор о качестве продукта. Оставшиеся 58%
+   (конверсия на органический показ −6.5%, интервал не содержит нуля) —
+   вот это уже продуктовый эффект.
+5. **Цена промо-видимости платится верхом выдачи.** Позиции 1–3 теряют 21.6%
+   органических показов, позиции 4–20 — 1.6–2.3%. Разговор про «среднюю
+   выдачу» прячет весь эффект.
+6. **«Незначимо» без MDE — не вывод.** Наблюдённый эффект −2.5% при MDE 6.8%:
+   дизайн физически не мог различить эффект своего размера. Отсюда запрет
+   на формулировку «эффекта нет» — данных хватает только на «прироста
+   не доказано».
+7. **Гардрейл проверяется на тех же объектах, что и основной эффект.** Доля
+   ответов дала −7.7 п.п. на разных объявлениях и −0.5 п.п. на одних и тех же.
+   Первое число — свойство выборки объявлений, а не эффект показа.
+
+> 💡 **Поправка не переносится как есть.** Полоса восстановления 4–8 дней
+> выведена из этого датасета и совпадает с правилом продажи самого генератора.
+> На другой площадке сепаратор придётся калибровать заново, иначе поправка
+> даст красивое число без покрытия.
+
+### Рекомендации
+
+1. **Не раскатывать платную видимость в текущем виде.** Триггер объявлен
+   заранее: падение органических контактов на сессию больше 1% относительно
+   (`GUARDRAIL_TOLERANCE = 0.01`). Фактическое падение — 10.9%, на порядок
+   выше порога, интервал от нуля далёк.
+2. **Если видимость остаётся — тарифицировать её как налог на органический
+   охват и ограничить промо-слоты на выдачу.** Цену ставить за место в топе,
+   а не за «источник спроса»: прироста контактов от показа не доказано.
+3. **Sell-through публиковать по категориям с EM-поправкой.** Платформенное
+   число — только рядом с ошибкой и с указанием полосы сепаратора, в которой
+   поправка работает. Одной цифры на дашборде быть не должно.
+4. **Заменить гардрейл.** Вместо доли ответов на платный отклик держать
+   конверсию на органический показ (сейчас −6.5%, интервал не содержит нуля)
+   и долю органики в топ-3 (−21.6%).
+5. **Пороги отката держать в одном месте.**
+
+| Что откатываем | Порог | Источник |
+|---|---|---|
+| Раскатку платных слотов | органические контакты на сессию падают > 1% относительно | `GUARDRAIL_TOLERANCE` |
+| Доверие к эксперименту | доля holdout уходит от 10% больше чем на 1 п.п. (χ² p < 0.01) | `sample_ratio_check` |
+| Публикацию поправки sell-through | сепаратор вне полосы 4–8 дней **или** ошибка категории > 3 п.п. | `config.TOL_RECOVERY`, `tests/test_separator_sensitivity.py` |
+| Вывод «эффекта нет» по контактам | эффект меньше MDE (6.8%) — вывод запрещён, нужен больший n | `mde_80` |
+
+### Следующий шаг
+
+1. **Пилот по числу слотов, а не по их наличию.** Рандомизировать 0 / 1 / 2 / 3
+   промо-слота на выдачу. Это единственный способ получить цифру для «лимита»,
+   которой в текущем дизайне нет: он сравнивает «все слоты погашены» с
+   «показаны».
+2. **Добрать мощность до измеряемого размера.** При текущем разбросе
+   (var ≈ 0.448 на сессию) для эффекта −2.5% при мощности 80% нужно
+   ≈ **290 тыс. сессий** при сплите 90/10 или ≈ **104 тыс.** при 50/50; в логе
+   сейчас 38 341 сессия, то есть 7.6× или 2.7×. Второй вариант дешевле и почти
+   всегда предпочтительнее, когда вопрос стоит о знаке.
+3. **Валидировать поправку вне генератора.** Сейчас это проверка
+   спецификации: сепаратор совпадает с параметром DGP. Следующий шаг — та же
+   процедура на площадке, где правило продажи заранее неизвестно.
+
+### Что изменит решение
+
+- **Пилот по слотам покажет, что конверсия на органический показ не падает**
+  при 1–2 слотах: значит, вытеснение — арифметика мест, а не качества трафика,
+  и тарификация с лимитом возможна.
+- **Каузальный эффект на долю ответов станет значимо отрицательным** на
+  большем n: тогда проблема не в позиции, а в качестве лида, и это отдельный
+  продукт (фильтрация, антифрод), а не разметка выдачи.
+- **Появится внешняя цена контакта** (биллинг, CPA-ставка, LTV): тогда решение
+  меняет экономика, а не статистика, и мемо переписывается от денег.
+- **Поправка sell-through перестанет восстанавливаться вне полосы 4–8 дней**
+  на данных другой площадки: значит, метод требует калибровки под DGP
+  и не переносится как есть.
+
+### Чего здесь нет
+
+- **Рублёвой оценки.** В логе нет биллинга, цены буста и ставки за контакт:
+  `boost_purchased` — это 0/1, а не сумма. Любая цифра «в деньгах» из этого
+  репозитория была бы придумана. Формула, которая понадобится, когда ставка
+  появится: `руб/день = −0.0116 × сессий в день × цена контакта`, но подставлять
+  её в бизнес-кейс рано — сначала мощность, потом деньги.
+- **Числа слотов на выдачу.** Не измерялось: в логе нет понятия «страница»
+  и «лимит», число промо на выдачу возникает из скоринга. «Ограничить слоты» —
+  направление, а не измеренная величина.
+- **Валидации метода на реальных данных.** Синтетика с посаженной истиной;
+  в отчёте это ограничение L1, а не сноска.
+- **Доли ответов как гардрейла.** Снята сознательно: причинную проверку
+  не проходит (см. раздел 3).
+
+## Что доказывает репозиторий
+
+- **Пререгистрация исполняется, а не цитируется.** Правило решения парсится
+  из `docs/preregistration.md` во время исполнения, и тесты падают, если код
+  и документ разошлись, — `liquidity/monetization.py::decision`,
+  `tests/test_monetization.py`
   (`test_decision_rules_come_from_the_document_not_the_code`,
   `test_preregistration_declares_the_guardrail_condition`).
-- **A seller self-report can be corrected, and the correction is scored against the key.** The EM
-  correction lands within ±0.03 on all five categories (worst 0.0161) and the bootstrap interval
-  covers the truth in at least four of them — `liquidity/bias.py`,
-  `tests/test_bias_recovery.py` (`test_every_category_recovers_within_tolerance`,
-  `test_bootstrap_interval_covers_the_truth_in_at_least_four_categories`), scored against
-  `_truth/ground_truth.json` — the same key `uv run python -m liquidity.scoring` prints next to
-  every estimate. The scorer is the only module in the package that opens the key, and
-  `tests/test_no_truth_leak.py` asserts that reader set is exactly `{scoring.py}`; adding an
-  import elsewhere turns the suite red.
-- **The validity band is a tested artifact, not a caveat.** Remove the reply-to-removal separator
-  or move the cutoff below 4 days and the correction misses on at least three categories (worst
-  24 pp; below 2 days, all five) —
-  `tests/test_separator_sensitivity.py` (`test_without_the_separator_the_correction_fails`,
-  `test_the_separator_cutoff_is_not_generic`, `test_recovery_holds_across_the_working_band`).
-- **The full report is part of the repository, not an appendix.** `reports/report.md` carries the
-  liquidity and demand-sufficiency blocks (cohort contact share, dead listings, time to first
-  contact, zero-result by population tier, the W=7 vs W=30 comparison), ten numbered limitations and
-  a claims-to-artefact table — `tests/test_report_claims.py` fails if its numbers drift from the code.
-- **Every figure is bound to the code that produced it.** Each PNG is written next to
-  `reports/figures/figure_data.json`, which records every number it drew; `make figures`
-  regenerates both. `tests/test_figures.py` rebuilds that payload and fails when the committed one
-  drifts, compares the plotted values against `metrics` / `monetization` / `scoring` directly, and
-  holds the separator figure's recovery band to the same tolerance the estimator tests use. The
-  truth-overlay figures live in `liquidity/scoring.py`, not in `figures.py`, because the no-leak
-  test fixes the truth-reader set at exactly one module — a figure module that opened the key would
-  make the audit's central claim false.
-- **The five-minute check and the transferable piece are one run.** `uv run pytest` → 126 passed
-  re-derives every asserted cell (corrected errors, treated/holdout rates, guardrail shares,
-  separator sensitivity) from `data/raw/`; `liquidity/monetization.py` is the part that moves to
-  another "did the paid surface create demand or relocate it" question, because it contrasts the
-  naive pre/post read (`+113%`, selection) against a 10% randomised holdout (`−0.0116` contacts
-  per session, Welch p 0.308) and prints the unpaid-contact and reply-rate guardrails in the same
-  output. `data/raw/` is gitignored, so a fresh clone needs `make all` before the suite can score
-  anything.
+- **Самоотчёт продавца можно поправить, и поправка оценена против ключа.**
+  EM-поправка попадает в ±0.03 на всех пяти категориях (худшее 0.0161),
+  а bootstrap-интервал накрывает истину минимум в четырёх из них —
+  `liquidity/bias.py`, `tests/test_bias_recovery.py`
+  (`test_every_category_recovers_within_tolerance`,
+  `test_bootstrap_interval_covers_the_truth_in_at_least_four_categories`),
+  против `_truth/ground_truth.json` — того же ключа, который
+  `uv run python -m liquidity.scoring` печатает рядом с каждой оценкой.
+  Скорер — единственный модуль пакета, который открывает ключ, и
+  `tests/test_no_truth_leak.py` требует, чтобы множество читателей было ровно
+  `{scoring.py}`: импорт в любом другом месте красит набор тестов.
+- **Полоса валидности — проверенный артефакт, а не оговорка.** Уберите
+  сепаратор «ответ → снятие» или сдвиньте отсечку ниже 4 дней — поправка
+  промахнётся минимум на трёх категориях (худшее 24 п.п.; ниже 2 дней — на всех
+  пяти) — `tests/test_separator_sensitivity.py`
+  (`test_without_the_separator_the_correction_fails`,
+  `test_the_separator_cutoff_is_not_generic`,
+  `test_recovery_holds_across_the_working_band`).
+- **Полный отчёт лежит в репозитории, а не в приложении.**
+  [reports/report.md](reports/report.md) несёт блоки ликвидности и достаточности
+  спроса (доля когорты с контактом, мёртвые объявления, время до первого
+  контакта, нулевая выдача по тирам регионов, сравнение W=7 и W=30), десять
+  пронумерованных ограничений и таблицу «утверждение → артефакт» —
+  `tests/test_report_claims.py` падает, если его числа разойдутся с кодом.
+- **Каждый график привязан к коду, который его построил.** Рядом с каждым PNG
+  лежит `reports/figures/figure_data.json` со всеми числами, которые он
+  нарисовал; `make figures` пересоздаёт и то и другое. `tests/test_figures.py`
+  пересобирает нагрузку и падает, если закоммиченная разошлась, сверяет
+  нарисованные значения напрямую с `metrics` / `monetization` / `scoring`
+  и держит полосу восстановления на графике сепаратора в том же допуске, что
+  и тесты оценщика. Графики с наложением истины живут в `liquidity/scoring.py`,
+  а не в `figures.py`, потому что тест на утечку фиксирует множество читателей
+  ключа ровно на одном модуле: модуль графиков, открывший ключ, сделал бы
+  центральное утверждение аудита ложным.
+- **Пятиминутная проверка и переносимая часть — один запуск.** `uv run pytest`
+  → 126 passed пересчитывает каждую закреплённую клетку (скорректированные
+  ошибки, ставки treated/holdout, доли гардрейлов, чувствительность
+  к сепаратору) из `data/raw/`; `liquidity/monetization.py` — та часть, которая
+  переезжает на любой другой вопрос «платная поверхность создала спрос или
+  перераспределила его», потому что противопоставляет наивный расчёт до/после
+  (`+113%`, отбор) 10%-му рандомизированному holdout (`−0.0116` контактов
+  на сессию, Welch p 0.308) и печатает гардрейлы по неоплаченным контактам
+  и по доле ответов в том же выводе. `data/raw/` в gitignore, поэтому свежий
+  клон сначала просит `make all`.
 
-## Quick start
+## Быстрый старт
 
 ```bash
 uv sync --all-groups
-make all                              # generates data/raw (seconds), then pytest + ruff
-make figures                          # renders reports/figures/*.png + the payload they drew
-uv run python -m liquidity.scoring    # estimates next to the planted truth
-uv run python -m liquidity.bias       # observable-only audit table, no truth
+make all            # генерирует data/raw, затем pytest и ruff
+make figures        # рисует reports/figures/*.png и числа под ними
+uv run python -m liquidity.scoring   # оценки рядом с истиной
+uv run python -m liquidity.bias      # аудит без истины
 ```
 
-`liquidity.generate` is deterministic — regenerating from seed 42 on a clean copy reproduced all
-eight parquet files byte-for-byte — and fast (seconds, not minutes). `data/raw/` is gitignored, so
-a clone starts empty: run `make all` before `pytest`, or the suite fails on missing parquet rather
-than skipping. The determinism claim was checked on a clean copy, not asserted by the suite.
-Optional: `uv run python -m liquidity.monetization` for the visibility leg.
+`liquidity.generate` детерминирован — перегенерация с сидом 42 на чистой копии
+воспроизвела все восемь parquet-файлов байт в байт — и быстр (секунды, а не
+минуты). `data/raw/` в gitignore, поэтому клон начинается с пустой папки:
+запустите `make all` до `pytest`, иначе набор тестов упадёт на отсутствующих
+parquet, а не пропустит их. Утверждение о детерминизме проверено на чистой
+копии, тестами оно не закреплено. По желанию:
+`uv run python -m liquidity.monetization` — нога видимости.
 
-## Layout
+## Структура
 
-```
+```text
 marketplace-liquidity-lab/
 ├── liquidity/
-│   ├── generate.py       # seeded DGP: raw tables + _truth/ground_truth.json
-│   ├── etl.py            # raw -> staging -> DuckDB marts
-│   ├── quality.py        # eight raw-layer gates, each with a fault-injection test
-│   ├── metrics.py        # cohort liquidity (W=7 and W=30), demand sufficiency, zero-result
-│   ├── bias.py           # proxy audit, EM correction, bootstrap CI
-│   ├── scoring.py        # scores the estimators against the key (only truth reader)
-│   ├── monetization.py   # naive pre/post vs holdout, guardrails, decision
-│   ├── figures.py        # observable figures, house style, no truth access
-│   └── config.py         # windows, seeds, tolerances (single source)
-├── sql/                  # cohort_liquidity.sql, zero_result.sql
-├── docs/                 # preregistration.md, decision-memo.md, data_dictionary.md, brief.md
-├── reports/report.md     # the full evidence-classed report, including the limitations
-├── reports/figures/      # six PNGs + figure_data.json (every number each PNG drew)
-├── LICENSE               # MIT
-├── tests/                # 126 tests, including the no-leak, must-fail, figure-freshness and
-│                         #   separator-sensitivity guards
-├── _truth/               # frozen answer key — read by liquidity/scoring.py and tests only
-├── data/                 # raw/, staging/, marts/ (gitignored, regenerable)
+│   ├── generate.py     # DGP: сырые таблицы и _truth/ground_truth.json
+│   ├── etl.py          # raw -> staging -> витрины DuckDB
+│   ├── quality.py      # восемь гейтов, у каждого тест на дефект
+│   ├── metrics.py      # ликвидность когорты (W=7 / W=30), спрос
+│   ├── bias.py         # аудит прокси, EM-поправка, bootstrap
+│   ├── scoring.py      # оценка против ключа, истину читает один
+│   ├── monetization.py # наивный до/после, holdout, гардрейлы
+│   ├── figures.py      # графики без доступа к истине
+│   └── config.py       # окна, сиды, допуски (единый источник)
+├── sql/                # cohort_liquidity.sql, zero_result.sql
+├── docs/               # prereg, decision-memo, data_dictionary, brief
+├── reports/report.md   # полный отчёт с ограничениями
+├── reports/figures/    # шесть PNG и figure_data.json под ними
+├── LICENSE             # MIT
+├── tests/              # 126 тестов: утечка истины, гейты, фигуры
+├── _truth/             # ключ: только scoring.py и тесты
+├── data/               # raw / staging / marts (gitignore)
 └── scripts/generate_data.py
 ```
 
-## How this differs from `serp-rank-lab`
+## Чем отличается от `serp-rank-lab`
 
-Both repositories end with a negative point estimate and a breached guardrail, and that resemblance
-is worth naming rather than leaving for a reader to notice.
+Оба репозитория заканчиваются отрицательной точечной оценкой и пробитым
+гардрейлом, и это совпадение лучше назвать, чем оставить читателю.
 
-| | `serp-rank-lab` | this repo |
+| | `serp-rank-lab` | этот репозиторий |
 |---|---|---|
-| Subject | which ranking policy to ship | whether the shipped metric measures the thing |
-| Primary artefact | experiment on a ranking policy, revenue per search | audit of a proxy against a latent truth |
-| The "second leg" | the experiment itself | a method demonstration: naive pre/post vs holdout |
-| Status of the finding | the result | the first leg is the finding; the second is underpowered (MDE 6.8% vs a 2.5% effect) |
+| Предмет | какую политику ранжирования выкатывать | измеряет ли отгруженная метрика то, что должна |
+| Основной артефакт | эксперимент над политикой, выручка на поиск | аудит прокси против скрытой истины |
+| «Вторая нога» | сам эксперимент | демонстрация метода: наивный до/после против holdout |
+| Статус находки | результат | первая нога — находка, вторая недомощный прогон (MDE 6.8% против эффекта 2.5%) |
 
-What transfers out of this repo is the audit shape: take the metric a team actually reports, score
-it against something outside itself, and price the decision on the corrected read. The visibility
-contrast is here because the same log answers it, not because it is the contribution.
+Наружу из этого репозитория переезжает форма аудита: взять метрику, которую
+команда реально отчитывает, сверить её с чем-то вне её самой и оценить решение
+по скорректированному чтению. Контраст по видимости здесь потому, что этот же
+лог на него отвечает, а не потому, что он — вклад.
 
-## What this is not
+## Чем это не является
 
-- **Not Avito data.** The log is synthetic, produced by a documented DGP with planted ground
-  truth. It is calibrated to public order-of-magnitude numbers only; it is evidence about a
-  measurement mechanism, not about the real platform.
-- **`_truth/ground_truth.json` is the test answer key, not a dataset.** No analysis module reads
-  it (`tests/test_no_truth_leak.py`); the tests score the estimator against it.
-- **Not an A/B-test portfolio piece.** A randomised holdout appears as one leg; the subject is
-  measurement validity, not experiment execution.
-- **Out of scope:** RFM, churn prediction, GMV root-cause decomposition, retention modelling,
-  fraud classification, a dashboard for its own sake. Trust and safety is not analysed.
+- **Не данные Авито.** Лог синтетический, сделан по документированному DGP
+  с посаженной истиной. Он откалиброван только по публичным числам порядка
+  величины: это доказательство про механизм измерения, а не про реальную
+  площадку.
+- **`_truth/ground_truth.json` — ключ к тестам, а не датасет.** Ни один модуль
+  анализа его не читает (`tests/test_no_truth_leak.py`); тесты сверяют
+  с ним оценщик.
+- **Не кейс про A/B-тесты.** Рандомизированный holdout здесь — одна нога;
+  предмет — валидность измерения, а не исполнение эксперимента.
+- **Вне рамок:** RFM, прогноз оттока, декомпозиция первопричин GMV,
+  моделирование retention, классификация фрода, дашборд ради дашборда.
+  Trust and safety не анализируется.
